@@ -1,0 +1,40 @@
+name: Сообщить об ошибке
+description: Сообщите о воспроизводимой ошибке в конвертере.
+title: "[Ошибка]: "
+labels: [bug]
+body:
+ - type: textarea
+   id: summary
+   attributes:
+     label: Что произошло?
+     description: Опишите ошибку и ожидаемый результат.
+   validations:
+     required: true
+ - type: input
+   id: python
+   attributes:
+     label: Версия Python
+     placeholder: "3.12.1"
+   validations:
+     required: true
+ - type: input
+   id: os
+   attributes:
+     label: Операционная система
+     placeholder: "Windows 11 24H2"
+   validations:
+     required: true
+ - type: textarea
+   id: command
+   attributes:
+     label: Команда и полный текст ошибки
+     render: text
+   validations:
+     required: true
+ - type: checkboxes
+   id: safety
+   attributes:
+     label: Проверка данных
+     options:
+       - label: Я удалил из примеров персональные данные и секреты.
+         required: true

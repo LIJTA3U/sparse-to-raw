@@ -4,3 +4,10 @@ __pycache__/
 *.raw
 *.tmp
 .venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.spec
