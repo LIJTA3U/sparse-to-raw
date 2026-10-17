@@ -1,57 +1,76 @@
 # sparse_to_raw.py
 
-A small, dependency-free Python converter for Android Sparse Image files. It expands Android sparse images into raw images and validates the input structure and supported checksums.
+Небольшой конвертер Android Sparse Image в обычный RAW-образ. Написан на Python и использует только стандартную библиотеку — устанавливать сторонние Python-пакеты не требуется.
 
-**Languages:** [На русском README.ru.md](README.ru.md) · English
+**Статус: экспериментальная версия v0.1.** Результат работы был побайтно сравнен с `simg2img.exe` на одном Android-образе `super.img` размером около 3,6 ГБ. SHA-256 преобразованных RAW-образов совпал. Это подтверждает результат для данного тестового файла, но перед использованием с другими образами рекомендуется проводить независимую проверку.
 
-**Status: experimental v0.1.** It was compared byte-for-byte against `simg2img.exe` using one 3.6 GB Android `super.img` test image. That comparison matched; broader independent testing is still recommended before relying on this tool for other images.
+**Язык:** Русский · [English](README.en.md)
 
-## Features
+## Возможности
 
-- Supports Android sparse format major version 1.
-- Supports `RAW`, `FILL`, `DONT_CARE`, and `CRC32` chunks.
-- Validates every CRC32 chunk.
-- Validates the image-level checksum when `image_checksum` is non-zero.
-- Checks header/chunk sizes, truncated payloads, block-count mismatches, unsupported chunk types, and trailing data.
-- Writes to a temporary file first and replaces the destination only after validation succeeds, so a failed conversion will not replace an existing output.
-- Uses only the Python standard library; works on Python 3.10+ on Windows, macOS, and Linux.
+- Поддерживает Android Sparse, основная версия формата — `1`.
+- Обрабатывает чанки `RAW`, `FILL`, `DONT_CARE` и `CRC32`.
+- Проверяет контрольные суммы CRC32 для чанков, если они присутствуют.
+- Проверяет общую контрольную сумму образа, когда поле `image_checksum` ненулевое.
+- Проверяет размеры заголовков и чанков, обнаруживает обрезанные данные, выход за заявленный размер, лишние байты в конце и неподдерживаемые типы чанков.
+- Сначала записывает результат во временный файл и заменяет целевой файл только после успешного завершения проверок. При ошибке уже существующий целевой файл не заменяется.
+- Обрабатывает большие образы потоково, не загружая весь образ в оперативную память.
+- Работает на Python 3.10+ в Windows, macOS и Linux.
 
-`DONT_CARE` regions read back as zero bytes. Filesystems may represent these regions as sparse holes rather than allocating every zero byte physically; the logical output size and contents remain correct.
+Области `DONT_CARE` становятся нулевыми байтами в логическом RAW-образе. Операционная система может хранить такие области в виде разреженных участков файла, не выделяя физическое место под каждый ноль; логический размер и читаемое содержимое при этом остаются правильными.
 
-## Usage
+## Требования
+
+- Python 3.10 или новее.
+- Свободное место на диске, достаточное для RAW-образа. Его размер показывается в начале конвертации.
+
+Дополнительные библиотеки не нужны.
+
+## Использование
+
+Общий синтаксис:
 
 ```bash
 python sparse_to_raw.py input_sparse.img output_raw.img
 ```
 
-Example for Windows Command Prompt:
+Пример для командной строки Windows (`cmd`):
 
 ```bat
 python sparse_to_raw.py super.img super_raw.img
 ```
 
-Ensure the destination drive has enough free space for the expanded image. The converter reports the expected raw size and CRC32 at completion.
+Параметры:
 
-## Tests
+- `input_sparse.img` — исходный файл Android Sparse.
+- `output_raw.img` — путь для создаваемого RAW-образа.
 
-Run from the project directory:
+В конце успешной конвертации программа выводит число обработанных блоков, итоговый логический размер и CRC32. Если структура файла или проверяемые контрольные суммы некорректны, программа сообщает об ошибке и возвращает ненулевой код завершения.
+
+## Тесты
+
+Запустите из каталога проекта:
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-The tests cover all supported chunk types, successful CRC validation, checksum failures, malformed/truncated input, trailing data, output sizing for trailing `DONT_CARE` chunks, and keeping an existing destination intact if conversion fails.
+Тесты покрывают поддерживаемые типы чанков, корректные и некорректные CRC32, неверную общую контрольную сумму, повреждённые/обрезанные данные, лишние байты в конце файла, корректный размер при завершающем `DONT_CARE` и сохранение предыдущего выходного файла при неудачной конвертации.
 
-## Safety notes
+## Ограничения и безопасность
 
-This utility only reads an input file and creates an output file. It does not access devices, partitions, or flash storage. Review paths carefully, preserve backups, and independently verify important images before using them in firmware operations.
+- Это экспериментальная версия, а не официальная замена `simg2img` от AOSP.
+- Было выполнено побайтовое сравнение только на одном большом реальном `super.img`; проверка на более широком наборе устройств и образов ещё нужна.
+- Утилита только читает входной файл и создаёт выходной. Она не подключается к телефону, не записывает разделы и не прошивает устройства.
+- Перед использованием образов для прошивки проверяйте происхождение файлов, сохраняйте резервные копии и по возможности сравнивайте результат с независимой реализацией, например AOSP `simg2img`.
+- Не используйте образ, если конвертация завершилась ошибкой.
 
-## Format references
+## Ссылки на формат
 
-- Android sparse format header and chunk types: [AOSP `sparse_format.h`](https://android.googlesource.com/platform/system/core/+/refs/heads/main/libsparse/include/sparse/sparse_format.h)
-- AOSP sparse image parser and CRC checks: [AOSP `sparse_read.cpp`](https://android.googlesource.com/platform/system/core/+/refs/heads/main/libsparse/sparse_read.cpp)
-- AOSP `simg2img`: [AOSP `simg2img.cpp`](https://android.googlesource.com/platform/system/core/+/refs/heads/main/libsparse/simg2img.cpp)
+- Заголовок Android Sparse и типы чанков: [AOSP `sparse_format.h`](https://android.googlesource.com/platform/system/core/+/refs/heads/main/libsparse/include/sparse/sparse_format.h)
+- Разбор sparse-образа и проверки CRC в AOSP: [AOSP `sparse_read.cpp`](https://android.googlesource.com/platform/system/core/+/refs/heads/main/libsparse/sparse_read.cpp)
+- Реализация AOSP `simg2img`: [AOSP `simg2img.cpp`](https://android.googlesource.com/platform/system/core/+/refs/heads/main/libsparse/simg2img.cpp)
 
-## License
+## Лицензия
 
-MIT. See [LICENSE](LICENSE).
+MIT. См. файл [LICENSE](LICENSE).
