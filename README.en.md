@@ -2,6 +2,10 @@
 
 A small command-line utility to inspect Android Sparse Images and convert them to raw images. It is written in Python and uses only the standard library.
 
+# sparse-to-raw
+
+> A streaming Android Sparse Image to RAW converter with a CLI and PySide6 GUI for Windows.
+
 [![Tests](https://img.shields.io/github/actions/workflow/status/LIJTA3U/sparse-to-raw/tests.yml?branch=main&label=tests)](https://github.com/LIJTA3U/sparse-to-raw/actions/workflows/tests.yml)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
