@@ -920,7 +920,7 @@ def main(argv: list[str] | None = None) -> int:
             window.close()
             app.processEvents()
             return 0
-except Exception:
+        except Exception:
     details = traceback.format_exc()
 
     log_path = (
