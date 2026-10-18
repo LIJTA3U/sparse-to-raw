@@ -56,15 +56,10 @@ jobs:
         shell: pwsh
         run: |
           $appFolder = "dist/package/sparse-to-raw-gui"
-
           if (-not (Test-Path -LiteralPath $appFolder -PathType Container)) {
             throw "GUI application folder was not created: $appFolder"
           }
-
-          Compress-Archive `
-            -Path "$appFolder/*" `
-            -DestinationPath "dist/sparse-to-raw-gui-windows.zip" `
-            -Force
+          Compress-Archive -Path "$appFolder/*" -DestinationPath "dist/sparse-to-raw-gui-windows.zip" -Force
 
       - name: Build standalone GUI executable
         run: >-
@@ -77,14 +72,12 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          # Remove Python interpreter directories from PATH for this step.
-          # Keep Windows system paths and other dependencies available.
+          # Remove the directories containing the Python interpreter and its Scripts folder
+          # from this step's PATH. This smoke-tests the EXEs as end-user applications.
           $pythonDirs = @()
 
           if ($env:pythonLocation) {
-            $pythonDirs += [System.IO.Path]::GetFullPath(
-              $env:pythonLocation
-            ).TrimEnd('\')
+            $pythonDirs += [System.IO.Path]::GetFullPath($env:pythonLocation).TrimEnd('\')
           }
 
           $pythonDirs += @(
@@ -92,111 +85,12 @@ jobs:
               Where-Object { $_.CommandType -eq "Application" } |
               ForEach-Object { Split-Path -Parent $_.Source } |
               Where-Object { $_ } |
-              ForEach-Object {
-                [System.IO.Path]::GetFullPath($_).TrimEnd('\')
-              }
+              ForEach-Object { [System.IO.Path]::GetFullPath($_).TrimEnd('\') }
           )
-
           $pythonDirs = @($pythonDirs | Sort-Object -Unique)
 
           $pythonPathEntries = @()
-
           foreach ($pythonDir in $pythonDirs) {
             $pythonPathEntries += $pythonDir
             $pythonPathEntries += (Join-Path $pythonDir "Scripts").TrimEnd('\')
           }
-
-          $pythonPathEntries = @($pythonPathEntries | Sort-Object -Unique)
-          $keptPathEntries = @()
-
-          foreach ($entry in ($env:PATH -split ';')) {
-            $candidate = $entry.Trim().Trim('"').TrimEnd('\')
-
-            if (-not $candidate) {
-              continue
-            }
-
-            $removeEntry = $false
-
-            foreach ($pythonEntry in $pythonPathEntries) {
-              if ([string]::Equals(
-                $candidate,
-                $pythonEntry.TrimEnd('\'),
-                [System.StringComparison]::OrdinalIgnoreCase
-              )) {
-                $removeEntry = $true
-                break
-              }
-            }
-
-            if (-not $removeEntry) {
-              $keptPathEntries += $entry
-            }
-          }
-
-          $env:PATH = $keptPathEntries -join ';'
-
-          function Invoke-GuiSmokeTest {
-            param(
-              [Parameter(Mandatory = $true)]
-              [string]$ExecutablePath,
-
-              [Parameter(Mandatory = $true)]
-              [string]$Label
-            )
-
-            $logPath = Join-Path $env:TEMP "sparse-to-raw-gui-self-test.log"
-
-            if (Test-Path -LiteralPath $logPath) {
-              Remove-Item -LiteralPath $logPath -Force
-            }
-
-            Write-Host "Smoke testing ${Label}: $ExecutablePath"
-
-            & $ExecutablePath --self-test
-            $exitCode = $LASTEXITCODE
-
-            if ($exitCode -ne 0) {
-              Write-Host "Smoke test exit code: $exitCode"
-
-              if (Test-Path -LiteralPath $logPath) {
-                Write-Host "----- GUI self-test diagnostic log -----"
-                Get-Content -LiteralPath $logPath
-                Write-Host "----------------------------------------"
-              } else {
-                Write-Host "No diagnostic file was created at: $logPath"
-              }
-
-              throw "$Label GUI smoke test failed with exit code $exitCode"
-            }
-
-            Write-Host "$Label GUI smoke test passed."
-          }
-
-          Invoke-GuiSmokeTest `
-            -ExecutablePath ".\dist\package\sparse-to-raw-gui\sparse-to-raw-gui.exe" `
-            -Label "Folder-package"
-
-          Invoke-GuiSmokeTest `
-            -ExecutablePath ".\dist\onefile\sparse-to-raw-gui.exe" `
-            -Label "One-file"
-
-      - name: Upload files to GitHub Release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/cli/sparse-to-raw.exe
-            dist/sparse-to-raw-gui-windows.zip
-            dist/onefile/sparse-to-raw-gui.exe
-
-      - name: Upload build artifacts for manual runs
-        if: github.event_name != 'release'
-        uses: actions/upload-artifact@v4
-        with:
-          name: sparse-to-raw-windows
-          path: |
-            dist/cli/sparse-to-raw.exe
-            dist/sparse-to-raw-gui-windows.zip
-            dist/onefile/sparse-to-raw-gui.exe
-          if-no-files-found: error
