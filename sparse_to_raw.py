@@ -12,7 +12,7 @@ import tempfile
 import time
 import zlib
 from pathlib import Path
-from typing import BinaryIO, Any
+from typing import BinaryIO, Any, Callable
 
 MAGIC = 0xED26FF3A
 CHUNK_RAW = 0xCAC1
@@ -36,6 +36,15 @@ CHUNK_NAMES = {
 
 class SparseImageError(ValueError):
     """Raised when a sparse image is malformed or fails checksum checks."""
+
+
+class ConversionCancelled(Exception):
+    """Raised when a caller safely cancels an operation before commit."""
+
+
+ProgressCallback = Callable[[dict[str, Any]], None]
+EventCallback = Callable[[str, str], None]
+CancelCallback = Callable[[], bool]
 
 
 def _read_exact(stream: BinaryIO, count: int, what: str) -> bytes:
@@ -108,8 +117,17 @@ def _process_sparse(
     show_progress: bool = False,
     calculate_sha256: bool = False,
     mode: str = "convert",
+    progress_callback: ProgressCallback | None = None,
+    event_callback: EventCallback | None = None,
+    cancel_requested: CancelCallback | None = None,
 ) -> dict[str, Any]:
-    """Validate an Android sparse image and optionally expand it to a raw image."""
+    """Validate an Android sparse image and optionally expand it to a raw image.
+
+    Callbacks are optional and are intended for GUI/integration clients. Progress is
+    reported from actual processed logical bytes and completed chunks. Cancellation
+    is checked between bounded read/write operations; temporary output is discarded
+    before commit so the destination remains untouched.
+    """
     source = Path(input_path).expanduser().resolve()
     if not source.is_file():
         raise FileNotFoundError(f"Input file not found: {source}")
@@ -140,13 +158,62 @@ def _process_sparse(
     processed_bytes = 0
     last_percent = -1
     last_progress_time = start_time
+    last_callback_percent = -1
+    last_callback_time = start_time
+    raw_size = 0
+    total_chunks = 0
+    completed_chunks = 0
+    active_chunk_index = 0
+    active_chunk_type = "—"
+
+    def notify(level: str, message: str) -> None:
+        if event_callback is not None:
+            event_callback(level, message)
+
+    def check_cancelled() -> None:
+        if cancel_requested is not None and cancel_requested():
+            notify("warning", "Отмена запрошена; временный результат будет удалён.")
+            raise ConversionCancelled("Операция отменена пользователем")
+
+    def emit_progress(*, force: bool = False, completed: bool = False) -> None:
+        nonlocal last_callback_percent, last_callback_time
+        if progress_callback is None:
+            return
+        now = time.monotonic()
+        if raw_size == 0:
+            # A zero-byte image is only complete after its structural checks pass.
+            percent = 100 if completed else 0
+        else:
+            percent = min(99, int(processed_bytes * 100 / raw_size))
+            if completed:
+                percent = 100
+        if not force and percent == last_callback_percent and now - last_callback_time < 0.10:
+            return
+        elapsed = max(now - start_time, 0.001)
+        progress_callback({
+            "processed_chunks": completed_chunks,
+            "total_chunks": total_chunks,
+            "current_chunk": active_chunk_index + 1 if total_chunks else 0,
+            "current_chunk_type": active_chunk_type,
+            "processed_bytes": processed_bytes,
+            "expected_bytes": raw_size,
+            "percent": percent,
+            "speed_bytes_per_second": processed_bytes / elapsed,
+            "elapsed_seconds": elapsed,
+        })
+        last_callback_percent = percent
+        last_callback_time = now
+
+    notify("info", f"Открытие входного файла: {source}")
 
     def advance(amount: int) -> None:
         nonlocal processed_bytes, last_percent, last_progress_time
+        check_cancelled()
         processed_bytes += amount
+        emit_progress()
         if not show_progress:
             return
-        percent = 100 if raw_size == 0 else min(100, int(processed_bytes * 100 / raw_size))
+        percent = 100 if raw_size == 0 else min(99, int(processed_bytes * 100 / raw_size))
         now = time.monotonic()
         if percent != last_percent or now - last_progress_time >= 0.25:
             elapsed = max(now - start_time, 0.001)
@@ -189,6 +256,13 @@ def _process_sparse(
                 )
             _read_exact(input_stream, file_header_size - HEADER_SIZE, "extended sparse header")
             raw_size = total_blocks * block_size
+            notify(
+                "success",
+                f"Проверка заголовка: OK · Android Sparse {major_version}.{minor_version} · "
+                f"чанков: {total_chunks:,} · ожидаемый RAW: {_format_size(raw_size)}",
+            )
+            emit_progress(force=True)
+            notify("info", "Начата потоковая обработка чанков.")
 
             if destination is not None:
                 temp_fd, temporary_name = tempfile.mkstemp(
@@ -216,6 +290,8 @@ def _process_sparse(
                     advance(amount)
 
             for chunk_index in range(total_chunks):
+                check_cancelled()
+                active_chunk_index = chunk_index
                 chunk_header = _read_exact(
                     input_stream, chunk_header_size, f"chunk {chunk_index} header"
                 )
@@ -249,7 +325,8 @@ def _process_sparse(
                     raise SparseImageError(
                         f"Chunk {chunk_index}: output exceeds declared total blocks"
                     )
-                chunk_counts[CHUNK_NAMES[chunk_type]] += 1
+                active_chunk_type = CHUNK_NAMES[chunk_type]
+                chunk_counts[active_chunk_type] += 1
 
                 if chunk_type == CHUNK_RAW:
                     remaining = data_size
@@ -289,12 +366,20 @@ def _process_sparse(
                     )[0]
                     computed_crc = running_crc & 0xFFFFFFFF
                     if stored_crc != computed_crc:
+                        notify("error", f"CRC32 mismatch в чанке {chunk_index + 1}.")
                         raise SparseImageError(
                             f"CRC32 mismatch in chunk {chunk_index}: computed 0x{computed_crc:08X}, stored 0x{stored_crc:08X}"
                         )
+                    crc_chunks_checked = chunk_counts["CRC32"]
+                    if crc_chunks_checked == 1 or crc_chunks_checked % 128 == 0:
+                        notify("success", f"Проверка CRC32 чанка {chunk_index + 1}: OK")
 
                 if chunk_type != CHUNK_CRC32:
                     output_blocks += chunk_blocks
+                completed_chunks = chunk_index + 1
+                emit_progress(
+                    force=(completed_chunks == total_chunks or completed_chunks % 256 == 0)
+                )
 
             if output_stream is not None:
                 # Extends trailing DONT_CARE ranges and zero-sized images correctly.
@@ -304,18 +389,37 @@ def _process_sparse(
                 output_stream.close()
                 output_stream = None
 
+            if temp_path is not None:
+                actual_temp_size = temp_path.stat().st_size
+                if actual_temp_size != raw_size:
+                    raise SparseImageError(
+                        f"Output size mismatch: got {actual_temp_size} bytes, expected {raw_size}"
+                    )
+                notify("success", f"Итоговый размер временного RAW: {_format_size(actual_temp_size)} · OK")
+
             if output_blocks != total_blocks:
                 raise SparseImageError(
                     f"Block count mismatch: wrote {output_blocks}, expected {total_blocks}"
                 )
             if input_stream.read(1):
+                notify("error", "Обнаружены лишние байты после последнего чанка.")
                 raise SparseImageError("Unexpected trailing bytes after the final chunk")
+            notify("success", f"Проверка числа блоков и структуры: OK · {output_blocks:,}/{total_blocks:,}")
+            if chunk_counts["CRC32"]:
+                notify("success", f"CRC32-чанков успешно проверено: {chunk_counts['CRC32']:,}")
 
             running_crc &= 0xFFFFFFFF
-            if image_checksum and image_checksum != running_crc:
-                raise SparseImageError(
-                    f"Image checksum mismatch: computed 0x{running_crc:08X}, header says 0x{image_checksum:08X}"
-                )
+            if image_checksum:
+                notify("info", "Проверка общей контрольной суммы образа…")
+                if image_checksum != running_crc:
+                    notify("error", "Общая контрольная сумма образа не совпадает.")
+                    raise SparseImageError(
+                        f"Image checksum mismatch: computed 0x{running_crc:08X}, header says 0x{image_checksum:08X}"
+                    )
+                notify("success", f"Проверка общей контрольной суммы: OK · 0x{running_crc:08X}")
+            else:
+                notify("warning", "Общая контрольная сумма не задана в заголовке; проверка пропущена.")
+            check_cancelled()
 
             if show_progress:
                 elapsed = max(time.monotonic() - start_time, 0.001)
@@ -355,6 +459,7 @@ def _process_sparse(
                 result["output_size_bytes"] = destination.stat().st_size if destination.exists() else raw_size
 
         if temp_path is not None and destination is not None:
+            check_cancelled()
             if force:
                 os.replace(temp_path, destination)
             else:
@@ -373,7 +478,11 @@ def _process_sparse(
                 temp_path.unlink()
             temp_path = None
             result["output_size_bytes"] = destination.stat().st_size
+            notify("success", f"Результат сохранён: {destination}")
+        elif destination is None:
+            notify("success", "Проверка образа завершена успешно; выходной файл не создавался.")
 
+        emit_progress(force=True, completed=True)
         return result
     finally:
         if output_stream is not None:
@@ -400,8 +509,15 @@ def convert_sparse_to_raw(
     force: bool = False,
     show_progress: bool = False,
     calculate_sha256: bool = False,
+    progress_callback: ProgressCallback | None = None,
+    event_callback: EventCallback | None = None,
+    cancel_requested: CancelCallback | None = None,
 ) -> dict[str, Any]:
-    """Convert a sparse image to raw. Existing output is preserved unless ``force=True``."""
+    """Convert a sparse image to raw. Existing output is preserved unless ``force=True``.
+
+    Optional callbacks allow desktop frontends to receive genuine progress/events and
+    request safe cancellation without changing the command-line interface.
+    """
     return _process_sparse(
         input_path,
         output_path,
@@ -409,6 +525,9 @@ def convert_sparse_to_raw(
         show_progress=show_progress,
         calculate_sha256=calculate_sha256,
         mode="convert",
+        progress_callback=progress_callback,
+        event_callback=event_callback,
+        cancel_requested=cancel_requested,
     )
 
 
@@ -418,6 +537,9 @@ def inspect_sparse(
     calculate_sha256: bool = False,
     show_progress: bool = False,
     mode: str = "info",
+    progress_callback: ProgressCallback | None = None,
+    event_callback: EventCallback | None = None,
+    cancel_requested: CancelCallback | None = None,
 ) -> dict[str, Any]:
     """Validate a sparse image without creating a RAW file and return its metadata."""
     return _process_sparse(
@@ -426,6 +548,9 @@ def inspect_sparse(
         show_progress=show_progress,
         calculate_sha256=calculate_sha256,
         mode=mode,
+        progress_callback=progress_callback,
+        event_callback=event_callback,
+        cancel_requested=cancel_requested,
     )
 
 

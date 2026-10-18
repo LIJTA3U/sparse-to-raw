@@ -13,6 +13,7 @@ from sparse_to_raw import (
     CHUNK_DONT_CARE,
     CHUNK_FILL,
     CHUNK_RAW,
+    ConversionCancelled,
     HEADER_FMT,
     MAGIC,
     SparseImageError,
@@ -207,6 +208,81 @@ class SparseToRawTests(unittest.TestCase):
             ])
         self.assertEqual(code, 0, stderr.getvalue())
         self.assertEqual(self.output_path.read_bytes(), b"AAAABBBB")
+
+
+    def test_zero_byte_image_reports_100_percent_only_after_validation(self) -> None:
+        self.input_path.write_bytes(make_sparse([], b""))
+        updates: list[dict] = []
+        result = inspect_sparse(self.input_path, progress_callback=updates.append)
+        self.assertEqual(result["raw_size_bytes"], 0)
+        self.assertGreaterEqual(len(updates), 2)
+        self.assertEqual(updates[0]["percent"], 0)
+        self.assertEqual(updates[-1]["percent"], 100)
+
+    def test_progress_callback_reports_real_chunk_and_byte_progress(self) -> None:
+        raw_data = b"DATA" + b"NEXT"
+        crc = zlib.crc32(raw_data) & 0xFFFFFFFF
+        chunks = [
+            chunk(CHUNK_RAW, 1, b"DATA"),
+            chunk(CHUNK_RAW, 1, b"NEXT"),
+            crc_chunk(crc),
+        ]
+        self.input_path.write_bytes(make_sparse(chunks, raw_data))
+        progress_events: list[dict] = []
+        log_events: list[tuple[str, str]] = []
+
+        result = convert_sparse_to_raw(
+            self.input_path,
+            self.output_path,
+            progress_callback=progress_events.append,
+            event_callback=lambda level, message: log_events.append((level, message)),
+        )
+
+        self.assertEqual(self.output_path.read_bytes(), raw_data)
+        self.assertGreaterEqual(len(progress_events), 4)
+        self.assertEqual(progress_events[-1]["percent"], 100)
+        self.assertEqual(progress_events[-1]["processed_chunks"], result["total_chunks"])
+        self.assertEqual(progress_events[-1]["total_chunks"], 3)
+        processed = [event["processed_bytes"] for event in progress_events]
+        self.assertEqual(processed, sorted(processed))
+        self.assertTrue(any("Проверка заголовка: OK" in message for _, message in log_events))
+        self.assertTrue(any("Проверка CRC32 чанка 3: OK" in message for _, message in log_events))
+        self.assertTrue(any("Результат сохранён" in message for _, message in log_events))
+
+    def test_cancellation_keeps_existing_output_and_removes_temporary_file(self) -> None:
+        original = b"KEEP"
+        self.output_path.write_bytes(original)
+        raw_data = b"DATA"
+        self.input_path.write_bytes(make_sparse([chunk(CHUNK_RAW, 1, raw_data)], raw_data))
+
+        with self.assertRaises(ConversionCancelled):
+            convert_sparse_to_raw(
+                self.input_path,
+                self.output_path,
+                force=True,
+                cancel_requested=lambda: True,
+            )
+
+        self.assertEqual(self.output_path.read_bytes(), original)
+        self.assertEqual(
+            sorted(path.name for path in self.root.iterdir()),
+            ["sample.raw", "sample.sparse"],
+        )
+
+    def test_failed_crc_is_reported_to_event_callback(self) -> None:
+        raw_data = b"DATA"
+        self.input_path.write_bytes(
+            make_sparse([chunk(CHUNK_RAW, 1, raw_data), crc_chunk(0xDEADBEEF)], raw_data)
+        )
+        events: list[tuple[str, str]] = []
+        with self.assertRaisesRegex(SparseImageError, "CRC32 mismatch"):
+            convert_sparse_to_raw(
+                self.input_path,
+                self.output_path,
+                event_callback=lambda level, message: events.append((level, message)),
+            )
+        self.assertTrue(any(level == "error" and "CRC32 mismatch" in message for level, message in events))
+        self.assertFalse(self.output_path.exists())
 
     def test_cli_info_and_json_report(self) -> None:
         raw_data = b"DATA"

@@ -5,7 +5,7 @@
 [![Тесты](https://img.shields.io/github/actions/workflow/status/LIJTA3U/sparse-to-raw/tests.yml?branch=main&label=тесты)](https://github.com/LIJTA3U/sparse-to-raw/actions/workflows/tests.yml)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Лицензия MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Без зависимостей](https://img.shields.io/badge/dependencies-none-brightgreen.svg)](#требования)
+[![CLI без зависимостей](https://img.shields.io/badge/CLI-зависимости%20не%20нужны-brightgreen.svg)](#требования)
 
 **Язык:** Русский · [English](README.en.md)
 
@@ -23,14 +23,32 @@
 - Необязательный SHA-256 логического RAW-содержимого и JSON-отчёт.
 - Объединение независимых частей Sparse-образа через `--merge-parts` в явно указанном порядке.
 - Потоковая обработка больших образов без загрузки всего файла в оперативную память.
-- Только стандартная библиотека Python — сторонние зависимости не нужны.
+- CLI-версия использует только стандартную библиотеку Python.
+- Необязательный GUI на PySide6 с отдельной сборкой для Windows.
 
 Области `DONT_CARE` интерпретируются как нулевые байты. Файловая система может физически хранить их как разреженные участки, не занимая место под каждый ноль; логический размер и читаемое содержимое остаются корректными.
 
 ## Требования
 
-- Python 3.10 или новее.
+- Python 3.10 или новее для запуска из исходников.
+- CLI не требует сторонних Python-пакетов.
+- Для графического интерфейса разработчикам нужен PySide6: `python -m pip install -r requirements-gui.txt`.
 - Свободное место на диске, достаточное для RAW-образа. Ожидаемый размер выводится при проверке и конвертации.
+
+## Графический интерфейс Windows
+
+В проект добавлен экспериментальный настольный GUI на PySide6 с тёмным футуристическим оформлением, угловой жёлтой рамкой, бирюзовыми акцентами, drag-and-drop, статистикой и журналом операций. GUI использует те же функции конвертации и проверки, что и CLI.
+
+Запуск GUI из исходников:
+
+```bat
+py -m pip install -r requirements-gui.txt
+py sparse_to_raw_gui.py
+```
+
+Конвертация выполняется в рабочем потоке Qt. В окне показываются фактические обработанные байты и чанки, CRC32 и общая контрольная сумма; отмена удаляет временный результат и не заменяет готовый выходной файл. При выборе уже существующего выходного файла приложение спрашивает подтверждение.
+
+Для конечных пользователей Python устанавливать не нужно: на странице [Releases](https://github.com/LIJTA3U/sparse-to-raw/releases) будет доступен архив `sparse-to-raw-gui-windows.zip` с EXE и библиотеками. Дополнительно публикуется однофайловый `sparse-to-raw-gui.exe`; архив с папкой приложения рекомендуется как основной вариант для диагностики и более быстрого запуска.
 
 ## Быстрый старт
 
@@ -92,16 +110,17 @@ py sparse_to_raw.py --merge-parts super.img_sparsechunk.0 super.img_sparsechunk.
 python sparse_to_raw.py super.img super_raw.img --quiet
 ```
 
-## Сборка `.exe` для Windows
+## Сборка для Windows
 
-Готовый исполняемый файл можно собрать локально (PyInstaller нужен только на этапе сборки):
+PyInstaller и PySide6 нужны только для разработки и упаковки, а не для конечного пользователя:
 
 ```bat
-py -m pip install pyinstaller
+py -m pip install -r requirements-build.txt
 py -m PyInstaller --clean --onefile --name sparse-to-raw sparse_to_raw.py
+py -m PyInstaller --clean --windowed --onedir --name sparse-to-raw-gui sparse_to_raw_gui.py
 ```
 
-Файл появится в `dist\sparse-to-raw.exe`. Workflow **Build Windows executable** также запускается при публикации GitHub Release и прикладывает `.exe` к релизу; при ручном запуске workflow файл доступен как Actions artifact.
+CLI EXE появится в `dist\sparse-to-raw.exe`, GUI — в папке `dist\sparse-to-raw-gui`. В workflow сборки GUI дополнительно упаковывается в ZIP, а также создаётся однофайловый GUI EXE. Workflow **Build Windows applications** прикладывает результаты к GitHub Release и проводит smoke-test GUI EXE при скрытом из `PATH` Python.
 
 ## Тесты
 

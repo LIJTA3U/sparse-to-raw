@@ -1,0 +1,2 @@
+# Optional desktop UI dependency; the command-line converter needs only Python's stdlib.
+PySide6>=6.6,<7
