@@ -906,13 +906,15 @@ class MainWindow(QWidget):
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
+
     if "--self-test" in args:
-        # Smoke-test Qt widget creation in a bundled build; no CLI conversion is run.
+        # Smoke-test creation and event processing of the bundled Qt window.
         try:
             if QApplication.instance() is None:
                 QApplication.setHighDpiScaleFactorRoundingPolicy(
                     Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
                 )
+
             app = QApplication.instance() or QApplication([sys.argv[0]])
             window = MainWindow()
             window.show()
@@ -920,23 +922,23 @@ def main(argv: list[str] | None = None) -> int:
             window.close()
             app.processEvents()
             return 0
+
         except Exception:
-    details = traceback.format_exc()
+            details = traceback.format_exc()
+            log_path = (
+                Path(os.environ.get("TEMP", tempfile.gettempdir()))
+                / "sparse-to-raw-gui-self-test.log"
+            )
 
-    log_path = (
-        Path(os.environ.get("TEMP", tempfile.gettempdir()))
-        / "sparse-to-raw-gui-self-test.log"
-    )
+            try:
+                log_path.write_text(details, encoding="utf-8")
+            except OSError:
+                pass
 
-    try:
-        log_path.write_text(details, encoding="utf-8")
-    except OSError:
-        pass
+            if sys.stderr is not None:
+                print(details, file=sys.stderr)
 
-    if sys.stderr is not None:
-        print(details, file=sys.stderr)
-
-    return 1
+            return 1
 
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
@@ -945,10 +947,10 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationName("sparse-to-raw")
     app.setApplicationVersion(APP_VERSION)
     app.setStyle("Fusion")
+
     window = MainWindow()
     window.show()
     return app.exec()
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
