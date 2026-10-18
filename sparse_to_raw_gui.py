@@ -920,8 +920,23 @@ def main(argv: list[str] | None = None) -> int:
             window.close()
             app.processEvents()
             return 0
-        except Exception:
-            return 1
+except Exception:
+    details = traceback.format_exc()
+
+    log_path = (
+        Path(os.environ.get("TEMP", tempfile.gettempdir()))
+        / "sparse-to-raw-gui-self-test.log"
+    )
+
+    try:
+        log_path.write_text(details, encoding="utf-8")
+    except OSError:
+        pass
+
+    if sys.stderr is not None:
+        print(details, file=sys.stderr)
+
+    return 1
 
     QApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
