@@ -4,6 +4,17 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing GitHub Release to attach the packages to
+        required: true
+        type: string
+        default: v0.3.0
+      source_ref:
+        description: Branch, tag, or commit to build from (main includes the post-release test fixes)
+        required: true
+        type: string
+        default: main
 
 permissions:
   contents: write
@@ -16,6 +27,30 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.event.release.tag_name }}
+
+      - name: Resolve existing release
+        id: target-release
+        uses: actions/github-script@v7
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.event.release.tag_name }}
+        with:
+          script: |
+            const tag = process.env.RELEASE_TAG;
+            if (!tag || !tag.trim()) {
+              core.setFailed('Release tag is empty. Refusing to upload assets.');
+              return;
+            }
+            // Require an existing release: never create a new version accidentally.
+            const response = await github.rest.repos.getReleaseByTag({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag,
+            });
+            core.setOutput('tag_name', response.data.tag_name);
+            core.setOutput('prerelease', String(response.data.prerelease));
+            core.info(`Assets will be uploaded to existing release ${response.data.html_url}`);
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -72,14 +107,11 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: |
-          # Remove the directories containing the Python interpreter and its Scripts folder
-          # from this step's PATH. This smoke-tests the EXEs as end-user applications.
+          # Remove only Python and Python/Scripts directories, preserving normal Windows PATH entries.
           $pythonDirs = @()
-
           if ($env:pythonLocation) {
             $pythonDirs += [System.IO.Path]::GetFullPath($env:pythonLocation).TrimEnd('\')
           }
-
           $pythonDirs += @(
             Get-Command python.exe -All -ErrorAction SilentlyContinue |
               Where-Object { $_.CommandType -eq "Application" } |
@@ -88,9 +120,81 @@ jobs:
               ForEach-Object { [System.IO.Path]::GetFullPath($_).TrimEnd('\') }
           )
           $pythonDirs = @($pythonDirs | Sort-Object -Unique)
-
-          $pythonPathEntries = @()
+          $removePaths = @()
           foreach ($pythonDir in $pythonDirs) {
-            $pythonPathEntries += $pythonDir
-            $pythonPathEntries += (Join-Path $pythonDir "Scripts").TrimEnd('\')
+            $removePaths += $pythonDir
+            $removePaths += (Join-Path $pythonDir "Scripts").TrimEnd('\')
           }
+          $removePaths = @($removePaths | Sort-Object -Unique)
+          $env:PATH = (($env:PATH -split ';') | Where-Object {
+            $entry = $_.Trim().Trim('"')
+            if (-not $entry) { return $false }
+            $fullEntry = [System.IO.Path]::GetFullPath($entry).TrimEnd('\')
+            foreach ($removePath in $removePaths) {
+              if ([string]::Equals($fullEntry, $removePath, [System.StringComparison]::OrdinalIgnoreCase)) {
+                return $false
+              }
+            }
+            return $true
+          }) -join ';'
+
+          function Invoke-GuiSmokeTest {
+            param(
+              [Parameter(Mandatory = $true)][string]$ExecutablePath,
+              [Parameter(Mandatory = $true)][string]$Label
+            )
+            if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) {
+              throw "$Label executable was not found: $ExecutablePath"
+            }
+            Write-Host "Running $Label self-test: $ExecutablePath"
+            & $ExecutablePath --self-test
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -ne 0) {
+              throw "$Label GUI smoke test failed with exit code $exitCode"
+            }
+          }
+
+          Invoke-GuiSmokeTest -ExecutablePath "dist/package/sparse-to-raw-gui/sparse-to-raw-gui.exe" -Label "Folder-package"
+          Invoke-GuiSmokeTest -ExecutablePath "dist/onefile/sparse-to-raw-gui.exe" -Label "One-file"
+
+      - name: Verify release files exist
+        shell: pwsh
+        run: |
+          $files = @(
+            "dist/cli/sparse-to-raw.exe",
+            "dist/onefile/sparse-to-raw-gui.exe",
+            "dist/sparse-to-raw-gui-windows.zip"
+          )
+          foreach ($file in $files) {
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+              throw "Expected release asset is missing: $file"
+            }
+            if ((Get-Item -LiteralPath $file).Length -le 0) {
+              throw "Expected release asset is empty: $file"
+            }
+            Write-Host ("Verified {0} ({1} bytes)" -f $file, (Get-Item -LiteralPath $file).Length)
+          }
+
+      - name: Upload build artifacts for inspection
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sparse-to-raw-windows-packages
+          path: |
+            dist/cli/sparse-to-raw.exe
+            dist/onefile/sparse-to-raw-gui.exe
+            dist/sparse-to-raw-gui-windows.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload files to existing GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.target-release.outputs.tag_name }}
+          prerelease: ${{ steps.target-release.outputs.prerelease }}
+          files: |
+            dist/cli/sparse-to-raw.exe
+            dist/onefile/sparse-to-raw-gui.exe
+            dist/sparse-to-raw-gui-windows.zip
+          fail_on_unmatched_files: true
+          overwrite_files: true
