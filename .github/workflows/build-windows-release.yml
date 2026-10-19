@@ -151,20 +151,28 @@ jobs:
               throw "$Label executable was not found: $ExecutablePath"
             }
 
+            $resolvedPath = (Resolve-Path -LiteralPath $ExecutablePath).Path
             $logPath = Join-Path $env:TEMP "sparse-to-raw-gui-self-test.log"
 
             if (Test-Path -LiteralPath $logPath) {
               Remove-Item -LiteralPath $logPath -Force
             }
 
-            Write-Host "Running $Label self-test: $ExecutablePath"
+            Write-Host "Running $Label self-test: $resolvedPath"
 
-            & $ExecutablePath --self-test
-            $exitCode = $LASTEXITCODE
+            try {
+              $process = Start-Process -FilePath $resolvedPath -ArgumentList @("--self-test") -WorkingDirectory (Get-Location).Path -PassThru -Wait -ErrorAction Stop
+              $exitCode = $process.ExitCode
+            }
+            catch {
+              Write-Host "Failed to start or wait for $Label executable."
+              Write-Host $_.Exception.ToString()
+              throw
+            }
+
+            Write-Host "$Label GUI self-test exit code: $exitCode"
 
             if ($exitCode -ne 0) {
-              Write-Host "$Label GUI smoke test failed with exit code $exitCode"
-
               if (Test-Path -LiteralPath $logPath -PathType Leaf) {
                 Write-Host "----- GUI self-test diagnostic log -----"
                 Get-Content -LiteralPath $logPath -Raw
@@ -181,7 +189,7 @@ jobs:
 
           Invoke-GuiSmokeTest -ExecutablePath "dist/package/sparse-to-raw-gui/sparse-to-raw-gui.exe" -Label "Folder-package"
           Invoke-GuiSmokeTest -ExecutablePath "dist/onefile/sparse-to-raw-gui.exe" -Label "One-file"
-
+          
       - name: Verify release files exist
         shell: pwsh
         run: |
