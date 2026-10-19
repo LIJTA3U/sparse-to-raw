@@ -43,6 +43,8 @@ A small command-line utility to inspect Android Sparse Images and convert them t
 
 The project includes an experimental PySide6 desktop interface with a dark futuristic theme, angular yellow frame, cyan accents, drag-and-drop, progress statistics, and an operation log. It calls the same conversion and validation functions as the CLI.
 
+![Main window of sparse-to-raw GUI](sparse-to-raw-gui.png)
+
 Run it from source:
 
 ```bat
