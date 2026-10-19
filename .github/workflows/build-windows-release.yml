@@ -140,18 +140,43 @@ jobs:
 
           function Invoke-GuiSmokeTest {
             param(
-              [Parameter(Mandatory = $true)][string]$ExecutablePath,
-              [Parameter(Mandatory = $true)][string]$Label
+              [Parameter(Mandatory = $true)]
+              [string]$ExecutablePath,
+
+              [Parameter(Mandatory = $true)]
+              [string]$Label
             )
+
             if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) {
               throw "$Label executable was not found: $ExecutablePath"
             }
+
+            $logPath = Join-Path $env:TEMP "sparse-to-raw-gui-self-test.log"
+
+            if (Test-Path -LiteralPath $logPath) {
+              Remove-Item -LiteralPath $logPath -Force
+            }
+
             Write-Host "Running $Label self-test: $ExecutablePath"
+
             & $ExecutablePath --self-test
             $exitCode = $LASTEXITCODE
+
             if ($exitCode -ne 0) {
+              Write-Host "$Label GUI smoke test failed with exit code $exitCode"
+
+              if (Test-Path -LiteralPath $logPath -PathType Leaf) {
+                Write-Host "----- GUI self-test diagnostic log -----"
+                Get-Content -LiteralPath $logPath -Raw
+                Write-Host "----------------------------------------"
+              } else {
+                Write-Host "No diagnostic file was created: $logPath"
+              }
+
               throw "$Label GUI smoke test failed with exit code $exitCode"
             }
+
+            Write-Host "$Label GUI smoke test passed."
           }
 
           Invoke-GuiSmokeTest -ExecutablePath "dist/package/sparse-to-raw-gui/sparse-to-raw-gui.exe" -Label "Folder-package"
