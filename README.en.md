@@ -13,7 +13,7 @@ A small command-line utility to inspect Android Sparse Images and convert them t
 
 **Language:** [Русский](README.md) · English
 
-> **Status: experimental.** The implementation was compared byte-for-byte with `simg2img.exe` on one Android `super.img` image of about 3.6 GB. This is evidence for that test file, not a replacement for independent testing across more images and devices.
+> **Status: experimental.** The implementation was compared byte-for-byte with `simg2img.exe` using two Android images: `super.img` (approximately 3.6 GB) and `userdata_exp.ai.img` (approximately 6.83 GB) from Google Pixel factory firmware. No differences were found in either comparison. This confirms correct conversion for these specific files, but does not replace independent testing across different images and devices.
 
 ## Features
 
