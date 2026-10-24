@@ -586,6 +586,9 @@ def merge_sparse_to_raw(
     force: bool = False,
     show_progress: bool = False,
     calculate_sha256: bool = False,
+    progress_callback: ProgressCallback | None = None,
+    event_callback: EventCallback | None = None,
+    cancel_requested: CancelCallback | None = None,
 ) -> dict[str, Any]:
     """Convert multiple independent sparse parts and concatenate them in supplied order.
 
@@ -618,9 +621,17 @@ def merge_sparse_to_raw(
     declared_sizes = [_read_declared_raw_size(source) for source in sources]
     expected_size = sum(declared_sizes)
     started = time.monotonic()
+    # A merge performs two real I/O passes: decoding each sparse part to a
+    # temporary RAW file, then concatenating those RAW files into the staged
+    # final output. Progress therefore uses 2 * expected_size work bytes.
     processed = 0
+    converted_bytes = 0
+    copied_bytes = 0
+    work_total = max(1, expected_size * 2)
     last_percent = -1
     last_update = started
+    last_callback_percent = -1
+    last_callback_time = started
     stage_path: Path | None = None
     stage_fd: int | None = None
     part_summaries: list[dict[str, Any]] = []
@@ -631,24 +642,64 @@ def merge_sparse_to_raw(
     running_crc = 0
     sha256 = hashlib.sha256() if calculate_sha256 else None
 
-    def advance(amount: int) -> None:
-        nonlocal processed, last_percent, last_update
+    def notify(level: str, message: str) -> None:
+        if event_callback is not None:
+            event_callback(level, message)
+
+    def check_cancelled() -> None:
+        if cancel_requested is not None and cancel_requested():
+            notify("warning", "Merge cancelled; temporary outputs will be removed.")
+            raise ConversionCancelled("Operation cancelled by user")
+
+    def emit_progress(*, force_update: bool = False, complete: bool = False) -> None:
+        nonlocal last_callback_percent, last_callback_time
+        if progress_callback is None:
+            return
+        now = time.monotonic()
+        done = min(work_total, processed)
+        percent = 100 if complete else min(99, int(done * 100 / work_total))
+        if not force_update and percent == last_callback_percent and now - last_callback_time < 0.10:
+            return
+        elapsed = max(now - started, 0.001)
+        progress_callback({
+            "processed_chunks": total_chunks,
+            "total_chunks": total_chunks,
+            "processed_bytes": done,
+            "expected_bytes": work_total,
+            "output_bytes": min(expected_size, copied_bytes),
+            "expected_output_bytes": expected_size,
+            "percent": percent,
+            "speed_bytes_per_second": done / elapsed,
+            "elapsed_seconds": elapsed,
+            "stage": "merge",
+        })
+        last_callback_percent = percent
+        last_callback_time = now
+
+    def advance_copy(amount: int) -> None:
+        nonlocal processed, copied_bytes, last_percent, last_update
+        check_cancelled()
+        copied_bytes += amount
         processed += amount
+        emit_progress()
         if not show_progress:
             return
-        percent = 100 if expected_size == 0 else min(100, int(processed * 100 / expected_size))
+        percent = min(99, int(processed * 100 / work_total))
         now = time.monotonic()
         if percent != last_percent or now - last_update >= 0.25:
             speed = processed / max(now - started, 0.001) / (1024 * 1024)
             print(
                 f"\rMerge: {percent:3d}% | {_format_size(processed)} / "
-                f"{_format_size(expected_size)} | {speed:.1f} MiB/s | elapsed {_format_duration(now - started)}",
+                f"{_format_size(work_total)} I/O | {speed:.1f} MiB/s | elapsed {_format_duration(now - started)}",
                 end="",
                 file=sys.stderr,
                 flush=True,
             )
             last_percent = percent
             last_update = now
+
+    notify("info", f"Merging {len(sources)} independent Sparse parts in the supplied order.")
+    emit_progress(force_update=True)
 
     try:
         stage_fd, stage_name = tempfile.mkstemp(
@@ -665,12 +716,26 @@ def merge_sparse_to_raw(
                             f"\nPart {index}/{len(sources)}: validating and expanding {source.name}",
                             file=sys.stderr,
                         )
+                    notify("info", f"Part {index}/{len(sources)}: validating {source.name}")
+
+                    def part_progress(data: dict[str, Any], *, _index: int = index) -> None:
+                        nonlocal processed, converted_bytes
+                        check_cancelled()
+                        part_done = min(part_size, int(data.get("processed_bytes", 0)))
+                        before = sum(declared_sizes[:_index - 1])
+                        converted_bytes = before + part_done
+                        processed = converted_bytes + copied_bytes
+                        emit_progress()
+
                     part_result = convert_sparse_to_raw(
                         source,
                         part_raw,
                         force=False,
                         show_progress=show_progress,
                         calculate_sha256=False,
+                        progress_callback=part_progress,
+                        event_callback=event_callback,
+                        cancel_requested=cancel_requested,
                     )
                     if part_result["raw_size_bytes"] != part_size:
                         raise SparseImageError(
@@ -682,11 +747,12 @@ def merge_sparse_to_raw(
                             data = part_stream.read(COPY_BUFFER_SIZE)
                             if not data:
                                 break
+                            check_cancelled()
                             combined.write(data)
                             running_crc = zlib.crc32(data, running_crc)
                             if sha256 is not None:
                                 sha256.update(data)
-                            advance(len(data))
+                            advance_copy(len(data))
                     part_raw.unlink(missing_ok=True)
                     total_input_bytes += source.stat().st_size
                     total_blocks += part_result["total_blocks"]
@@ -704,17 +770,11 @@ def merge_sparse_to_raw(
             combined.flush()
             os.fsync(combined.fileno())
 
-        if processed != expected_size or stage_path.stat().st_size != expected_size:
+        if copied_bytes != expected_size or stage_path.stat().st_size != expected_size:
             raise OSError(
                 f"Merged size mismatch: expected {expected_size} bytes, wrote {stage_path.stat().st_size}"
             )
-        if show_progress:
-            elapsed = max(time.monotonic() - started, 0.001)
-            speed = processed / elapsed / (1024 * 1024)
-            print(
-                f"\rMerge: 100% | {_format_size(processed)} / {_format_size(expected_size)} | {speed:.1f} MiB/s | elapsed {_format_duration(time.monotonic() - started)}",
-                file=sys.stderr,
-            )
+        check_cancelled()
         if force:
             os.replace(stage_path, destination)
         else:
@@ -731,6 +791,15 @@ def merge_sparse_to_raw(
                 ) from exc
             stage_path.unlink()
         stage_path = None
+        processed = work_total
+        emit_progress(force_update=True, complete=True)
+        if show_progress:
+            elapsed = max(time.monotonic() - started, 0.001)
+            speed = processed / elapsed / (1024 * 1024)
+            print(
+                f"\rMerge: 100% | {_format_size(processed)} / {_format_size(work_total)} I/O | {speed:.1f} MiB/s | elapsed {_format_duration(time.monotonic() - started)}",
+                file=sys.stderr,
+            )
 
         result: dict[str, Any] = {
             "mode": "merge",

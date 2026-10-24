@@ -9,7 +9,7 @@ on:
         description: Existing GitHub Release to attach the packages to
         required: true
         type: string
-        default: v0.3.0
+        default: v0.4.0
       source_ref:
         description: Branch, tag, or commit to build from (main includes the post-release test fixes)
         required: true
@@ -85,7 +85,8 @@ jobs:
         run: >-
           python -m PyInstaller --noconfirm --clean --windowed --onedir
           --name sparse-to-raw-gui --distpath dist/package --workpath build/gui-folder
-          --specpath build/spec/gui-folder sparse_to_raw_gui.py
+          --specpath build/spec/gui-folder --icon assets/sparse-to-raw.ico
+          --add-data "assets/sparse-to-raw.ico;assets" sparse_to_raw_gui.py
 
       - name: Zip GUI application folder
         shell: pwsh
@@ -100,7 +101,8 @@ jobs:
         run: >-
           python -m PyInstaller --noconfirm --clean --windowed --onefile
           --name sparse-to-raw-gui --distpath dist/onefile --workpath build/gui-onefile
-          --specpath build/spec/gui-onefile sparse_to_raw_gui.py
+          --specpath build/spec/gui-onefile --icon assets/sparse-to-raw.ico
+          --add-data "assets/sparse-to-raw.ico;assets" sparse_to_raw_gui.py
 
       - name: Smoke-test bundled GUI without Python on PATH
         shell: pwsh
@@ -189,7 +191,7 @@ jobs:
 
           Invoke-GuiSmokeTest -ExecutablePath "dist/package/sparse-to-raw-gui/sparse-to-raw-gui.exe" -Label "Folder-package"
           Invoke-GuiSmokeTest -ExecutablePath "dist/onefile/sparse-to-raw-gui.exe" -Label "One-file"
-          
+
       - name: Verify release files exist
         shell: pwsh
         run: |

@@ -195,6 +195,38 @@ class SparseToRawTests(unittest.TestCase):
             merge_sparse_to_raw([first, second], self.output_path)
         self.assertFalse(self.output_path.exists())
 
+
+    def test_merge_progress_is_monotonic_and_finishes_after_commit(self) -> None:
+        first = self.root / "part0.sparse"
+        second = self.root / "part1.sparse"
+        first.write_bytes(make_sparse([chunk(CHUNK_RAW, 1, b"AAAA")], b"AAAA"))
+        second.write_bytes(make_sparse([chunk(CHUNK_RAW, 1, b"BBBB")], b"BBBB"))
+        updates: list[dict] = []
+        events: list[tuple[str, str]] = []
+        result = merge_sparse_to_raw(
+            [first, second], self.output_path,
+            progress_callback=updates.append,
+            event_callback=lambda level, message: events.append((level, message)),
+        )
+        percentages = [item["percent"] for item in updates]
+        self.assertEqual(percentages[-1], 100)
+        self.assertEqual(percentages, sorted(percentages))
+        self.assertEqual(result["output_size_bytes"], 8)
+        self.assertTrue(any(item.get("stage") == "merge" for item in updates))
+        self.assertTrue(any("Merging 2" in message for _, message in events))
+
+    def test_merge_cancellation_preserves_existing_destination(self) -> None:
+        first = self.root / "part0.sparse"
+        second = self.root / "part1.sparse"
+        first.write_bytes(make_sparse([chunk(CHUNK_RAW, 1, b"AAAA")], b"AAAA"))
+        second.write_bytes(make_sparse([chunk(CHUNK_RAW, 1, b"BBBB")], b"BBBB"))
+        self.output_path.write_bytes(b"KEEP")
+        with self.assertRaises(ConversionCancelled):
+            merge_sparse_to_raw([first, second], self.output_path, force=True, cancel_requested=lambda: True)
+        self.assertEqual(self.output_path.read_bytes(), b"KEEP")
+        self.assertEqual(sorted(path.name for path in self.root.iterdir()),
+                         ["part0.sparse", "part1.sparse", "sample.raw"])
+
     def test_cli_merge_parts_syntax(self) -> None:
         first = self.root / "part0.sparse"
         second = self.root / "part1.sparse"

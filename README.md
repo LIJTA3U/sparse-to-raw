@@ -1,157 +1,164 @@
 # sparse-to-raw
 
-Небольшая CLI-утилита для проверки и преобразования Android Sparse Image в обычный RAW-образ. Написана на Python и использует только стандартную библиотеку.
+A small command-line utility to inspect Android Sparse Images and convert them to raw images. It is written in Python and uses only the standard library.
 
-[![Тесты](https://img.shields.io/github/actions/workflow/status/LIJTA3U/sparse-to-raw/tests.yml?branch=main&label=тесты)](https://github.com/LIJTA3U/sparse-to-raw/actions/workflows/tests.yml)
+> A streaming Android Sparse Image to RAW converter with a CLI and PySide6 GUI for Windows.
+
+[![Tests](https://img.shields.io/github/actions/workflow/status/LIJTA3U/sparse-to-raw/tests.yml?branch=main&label=tests)](https://github.com/LIJTA3U/sparse-to-raw/actions/workflows/tests.yml)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Лицензия MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![CLI без зависимостей](https://img.shields.io/badge/CLI-зависимости%20не%20нужны-brightgreen.svg)](#требования)
+[![MIT License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![CLI has no dependencies](https://img.shields.io/badge/CLI-no%20extra%20dependencies-brightgreen.svg)](#requirements)
 
-**Язык:** Русский · [English](README.en.md)
+**Language:** English · [Русский](README.ru.md)
 
+<<<<<<< HEAD
 > **Статус: экспериментальная версия.** Реализация была побайтно сравнена с `simg2img.exe` на двух Android-образах: `super.img` размером около 3,6 ГБ из заводской прошивки Blackview и `userdata_exp.ai.img` размером около 6,83 ГБ из заводской прошивки Google Pixel. В обоих случаях различий не обнаружено. Это подтверждает корректность преобразования для данных файлов, но не заменяет независимое тестирование на разных образах и устройствах.
+=======
+> **Status: experimental.** The implementation was compared byte-for-byte with `simg2img.exe` using two Android images: `super.img` (approximately 3.6 GB) and `userdata_exp.ai.img` (approximately 6.83 GB) from Google Pixel factory firmware. No differences were found in either comparison. This confirms correct conversion for these specific files, but does not replace independent testing across different images and devices.
+>>>>>>> 58855c0 (Release v0.4.0 with GUI improvements and new features)
 
-## Возможности
+## Features
 
-- Конвертация Android Sparse Image версии 1 в RAW.
-- Поддержка чанков `RAW`, `FILL`, `DONT_CARE` и `CRC32`.
-- Проверка CRC32 отдельных чанков и общей контрольной суммы образа.
-- Проверка структуры заголовков, размера блоков, количества блоков, обрезанных данных и лишних байтов в конце.
-- Режимы информации и проверки без создания RAW-файла: `--info` и `--verify-only`.
-- Защита существующих файлов: перезапись запрещена по умолчанию, для неё нужен `--force`.
-- Индикатор прогресса, скорость и объём обработанных данных.
-- Необязательный SHA-256 логического RAW-содержимого и JSON-отчёт.
-- Объединение независимых частей Sparse-образа через `--merge-parts` в явно указанном порядке.
-- Потоковая обработка больших образов без загрузки всего файла в оперативную память.
-- CLI-версия использует только стандартную библиотеку Python.
-- Необязательный GUI на PySide6 с отдельной сборкой для Windows.
+- Convert Android Sparse Image format version 1 to raw.
+- Support for `RAW`, `FILL`, `DONT_CARE`, and `CRC32` chunks.
+- Validation of per-chunk CRC32 and the image-level checksum.
+- Structural checks for headers, block sizes and counts, truncated data, and trailing bytes.
+- Inspection and verification without creating a raw image: `--info` and `--verify-only`.
+- Safe output handling: existing files are not overwritten unless `--force` is supplied.
+- Progress indicator, throughput, and processed size.
+- Optional SHA-256 of the logical raw content and JSON report.
+- Explicitly ordered merging of independent sparse parts via `--merge-parts`.
+- Streaming implementation suitable for large images without loading the entire file into memory.
+- The CLI uses only the Python standard library.
+- PySide6 GUI with Russian/English language selection and persistent settings.
+- Switchable speed display: decimal MB/s, binary MiB/s, or Mbit/s.
+- Sparse-image analysis without producing a RAW output, with JSON export.
+- Sequential batch queue with a detailed JSON run report.
+- Visual merging of independent Sparse parts with manual ordering.
+- Application icon, larger action icons, recent-file history, and saved paths/window geometry.
 
-Области `DONT_CARE` интерпретируются как нулевые байты. Файловая система может физически хранить их как разреженные участки, не занимая место под каждый ноль; логический размер и читаемое содержимое остаются корректными.
+`DONT_CARE` ranges are interpreted as zero bytes. The filesystem may store them as sparse file holes, while the logical output size and readable contents remain correct.
 
-## Требования
+## Requirements
 
-- Python 3.10 или новее для запуска из исходников.
-- CLI не требует сторонних Python-пакетов.
-- Для графического интерфейса разработчикам нужен PySide6: `python -m pip install -r requirements-gui.txt`.
-- Свободное место на диске, достаточное для RAW-образа. Ожидаемый размер выводится при проверке и конвертации.
+- Python 3.10 or newer when running from source.
+- The CLI has no third-party package requirements.
+- Developers who want the GUI need PySide6: `python -m pip install -r requirements-gui.txt`.
+- Enough free disk space for the expanded image.
 
-## Графический интерфейс Windows
+## Windows desktop GUI
 
-В проект добавлен экспериментальный настольный GUI на PySide6 с тёмным футуристическим оформлением, угловой жёлтой рамкой, бирюзовыми акцентами, drag-and-drop, статистикой и журналом операций. GUI использует те же функции конвертации и проверки, что и CLI.
+The PySide6 GUI includes a dark futuristic theme, angular yellow frame, cyan accents, drag-and-drop, progress statistics, and diagnostics. Version `v0.4.0` adds Russian/English switching, saved preferences and recent files, speed units (MB/s, MiB/s, Mbit/s), Sparse analysis, a sequential batch queue, visual ordered merging of independent Sparse parts, a bundled application icon, and detailed JSON reports. It calls the same conversion and validation functions as the CLI.
 
+<<<<<<< HEAD
 ![Главное окно sparse-to-raw GUI](sparse-to-raw-gui.png)
 
 Запуск GUI из исходников:
+=======
+![Main window of sparse-to-raw GUI](sparse-to-raw-gui.png)
+
+For developer setup, headless tests, and PyInstaller packaging, see [GUI_DEVELOPMENT.md](GUI_DEVELOPMENT.md).
+
+Run it from source:
+>>>>>>> 58855c0 (Release v0.4.0 with GUI improvements and new features)
 
 ```bat
 py -m pip install -r requirements-gui.txt
 py sparse_to_raw_gui.py
 ```
 
-Конвертация выполняется в рабочем потоке Qt. В окне показываются фактические обработанные байты и чанки, CRC32 и общая контрольная сумма; отмена удаляет временный результат и не заменяет готовый выходной файл. При выборе уже существующего выходного файла приложение спрашивает подтверждение.
+The icon resource is `assets/sparse-to-raw.ico`. Use the language and speed selectors in the main window to change UI language and throughput units. The **Analyze image** action verifies metadata and exports JSON; **Task queue** converts multiple images sequentially; **Merge Sparse** lets you reorder independent parts before merging.
 
-Для конечных пользователей Python устанавливать не нужно: на странице [Releases](https://github.com/LIJTA3U/sparse-to-raw/releases) будет доступен архив `sparse-to-raw-gui-windows.zip` с EXE и библиотеками. Дополнительно публикуется однофайловый `sparse-to-raw-gui.exe`; архив с папкой приложения рекомендуется как основной вариант для диагностики и более быстрого запуска.
+Conversion and analysis run in Qt worker threads. The UI reports actual processing progress, throughput, CRC32 and image-checksum validation; cancellation discards temporary output and leaves an existing destination intact. Language, speed units, recent input files, last paths and window geometry are saved between launches. The batch queue writes a detailed JSON summary to the output directory, and analysis/conversion/merge reports can be exported manually. If the output file already exists, the app asks for confirmation before replacing it.
 
-## Быстрый старт
+End users do not need Python installed. The [Releases](https://github.com/LIJTA3U/sparse-to-raw/releases) page will provide `sparse-to-raw-gui-windows.zip`, containing the EXE and its bundled libraries. A standalone `sparse-to-raw-gui.exe` is also built; the folder ZIP is the recommended package for easier diagnostics and faster startup.
+
+## Quick start
 
 ```bash
 python sparse_to_raw.py input_sparse.img output_raw.img
 ```
 
-Пример для Windows (`cmd`):
+On Windows Command Prompt:
 
 ```bat
 py sparse_to_raw.py super.img super_raw.img
 ```
 
-Если `super_raw.img` уже существует, программа остановится, не изменив его. Разрешить перезапись можно явно:
+If the output already exists, the program stops without changing it. To explicitly allow replacement:
 
 ```bat
 py sparse_to_raw.py super.img super_raw.img --force
 ```
 
-## Команды
+## Commands
 
-### Информация об образе без конвертации
+Inspect and validate the image without conversion:
 
 ```bash
 python sparse_to_raw.py super.img --info
 ```
 
-Программа проверит структуру файла и контрольные суммы, выведет версию формата, размер блока, ожидаемый RAW-размер и количество чанков каждого типа. Выходной образ создаваться не будет.
-
-### Проверка без создания RAW
+Verify the file structure and checksums without creating a raw image:
 
 ```bash
 python sparse_to_raw.py super.img --verify-only
 ```
 
-Подходит для предварительной проверки файла. При повреждённой структуре или неверной контрольной сумме программа завершится с ошибкой и ненулевым кодом возврата.
-
-### SHA-256 и JSON-отчёт
+Calculate the logical RAW SHA-256 and save a JSON report:
 
 ```bash
 python sparse_to_raw.py super.img super_raw.img --sha256 --json-report report.json
 ```
 
-SHA-256 рассчитывается по логическому содержимому будущего RAW-образа, в том числе по нулевым областям `DONT_CARE`. JSON-отчёт содержит метаданные, количества чанков и вычисленные контрольные суммы. Если файл отчёта уже существует, используйте `--force`, чтобы заменить его.
+SHA-256 includes zero-filled `DONT_CARE` ranges. Existing report files also require `--force` to be replaced. To hide the progress indicator, add `--quiet`.
 
-### Объединить независимые Sparse-части
-
-Если прошивка содержит несколько независимых Sparse-файлов, которые вместе образуют один RAW-образ, их можно объединить в указанном порядке:
+Merge independent sparse parts in the order you specify:
 
 ```bat
 py sparse_to_raw.py --merge-parts super.img_sparsechunk.0 super.img_sparsechunk.1 --output super_raw.img --sha256
 ```
 
-Добавьте остальные части в правильном числовом порядке. Каждая часть должна быть самостоятельным корректным Android Sparse Image с собственным заголовком; программа проверяет каждую часть отдельно и не публикует итоговый файл, если хотя бы одна проверка завершается ошибкой. Не используйте этот режим для частей, которые являются лишь произвольным побайтовым разрезанием одного sparse-файла.
+List all parts in the correct numeric order. Each input must be a complete Android Sparse Image with its own header. Every part is validated independently, and the final output is not published if any part fails validation. Do not use this mode for arbitrary byte-level splits of one sparse file.
 
-### Отключить индикатор прогресса
+## Build for Windows
 
-```bash
-python sparse_to_raw.py super.img super_raw.img --quiet
-```
-
-## Сборка для Windows
-
-PyInstaller и PySide6 нужны только для разработки и упаковки, а не для конечного пользователя:
+PyInstaller and PySide6 are required only for development and packaging, not for end users:
 
 ```bat
 py -m pip install -r requirements-build.txt
 py -m PyInstaller --clean --onefile --name sparse-to-raw sparse_to_raw.py
-py -m PyInstaller --clean --windowed --onedir --name sparse-to-raw-gui sparse_to_raw_gui.py
+py -m PyInstaller --clean --windowed --onedir --name sparse-to-raw-gui --icon assets/sparse-to-raw.ico --add-data "assets/sparse-to-raw.ico;assets" sparse_to_raw_gui.py
 ```
 
-CLI EXE появится в `dist\sparse-to-raw.exe`, GUI — в папке `dist\sparse-to-raw-gui`. В workflow сборки GUI дополнительно упаковывается в ZIP, а также создаётся однофайловый GUI EXE. Workflow **Build Windows applications** прикладывает результаты к GitHub Release и проводит smoke-test GUI EXE при скрытом из `PATH` Python.
+The CLI EXE is created at `dist\sparse-to-raw.exe`, and the GUI folder at `dist\sparse-to-raw-gui`. The Windows build workflow also creates a ZIP of the GUI folder and a standalone GUI EXE. **Build Windows applications** attaches all assets to GitHub Releases and smoke-tests the bundled GUI with Python hidden from `PATH`.
 
-## Тесты
-
-Из корневого каталога проекта выполните:
+## Tests
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-Тесты проверяют типы чанков, корректные и ошибочные CRC, общую контрольную сумму, обрезанные и повреждённые данные, размер завершающего `DONT_CARE`, защиту существующего файла, режимы проверки, объединение Sparse-частей, SHA-256 и JSON-отчёт. GitHub Actions запускает тесты автоматически для нескольких версий Python в Windows и Linux.
+Core tests cover all supported chunk types, CRC and image-checksum failures, malformed/truncated data, trailing `DONT_CARE`, safe overwrite behavior, inspection/verification modes, multi-part merging, SHA-256, JSON reporting, progress callbacks, monotonic merge progress, and safe cancellation. GUI smoke tests cover path validation, language/speed settings, recent-file persistence, analysis worker results, batch conversion, and JSON report generation. GitHub Actions runs the core suite on multiple Python versions on Windows and Linux. A separate GUI workflow installs PySide6 and runs headless widget/path-validation smoke tests on Windows and Linux.
 
-## Ограничения и безопасность
+## Limitations and safety
 
-- Проект экспериментальный и не является официальной заменой `simg2img` из AOSP.
-- Сравнение с независимой реализацией выполнено на одном большом реальном `super.img`; для критически важных образов проверяйте результаты независимо.
-- Утилита не подключается к телефону и не прошивает разделы: она только читает входной файл и, при конвертации, создаёт выходной.
-- Перед запуском проверьте пути и свободное место на диске. При объединении потребуется место для итогового временного RAW-файла и временно раскрываемой текущей части. Не используйте образ после ошибки проверки.
-- Файлы `super.img_sparsechunk.*` не объединяются автоматически: для объединения используйте `--merge-parts`, передав только самостоятельные Sparse-файлы и указав правильный порядок вручную.
+- This is an experimental project, not an official AOSP `simg2img` replacement.
+- Independent comparison was performed on one large real `super.img`; independently verify images used for critical work.
+- This utility does not communicate with a phone or flash partitions. It only reads an input file and optionally creates an output file.
+- Check paths and free disk space before running. Multi-part merging temporarily needs space for the combined staging file plus the currently expanded part. Do not use an image after a validation error.
+- `super.img_sparsechunk.*` files are not auto-detected; use `--merge-parts` only for independent Sparse files and specify the correct part order manually.
 
-## Ссылки на формат
+## Format references
 
-- [AOSP `sparse_format.h`](https://android.googlesource.com/platform/system/core/+/refs/heads/main/libsparse/include/sparse/sparse_format.h) — заголовок и типы чанков.
-- [AOSP `sparse_read.cpp`](https://android.googlesource.com/platform/system/core/+/refs/heads/main/libsparse/sparse_read.cpp) — разбор Sparse и проверки CRC.
-- [AOSP `simg2img.cpp`](https://android.googlesource.com/platform/system/core/+/refs/heads/main/libsparse/simg2img.cpp) — реализация конвертера.
+- [AOSP `sparse_format.h`](https://android.googlesource.com/platform/system/core/+/refs/heads/main/libsparse/include/sparse/sparse_format.h)
+- [AOSP `sparse_read.cpp`](https://android.googlesource.com/platform/system/core/+/refs/heads/main/libsparse/sparse_read.cpp)
+- [AOSP `simg2img.cpp`](https://android.googlesource.com/platform/system/core/+/refs/heads/main/libsparse/simg2img.cpp)
 
-## Участие в разработке
+## Contributing
 
-Баг-репорты, тестовые файлы без персональных данных и pull request приветствуются. Перед отправкой изменений запустите тесты и ознакомьтесь с [CONTRIBUTING.md](CONTRIBUTING.md).
+Bug reports, privacy-safe test files, and pull requests are welcome. Run the tests first and see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-## Лицензия
+## License
 
 [MIT](LICENSE).

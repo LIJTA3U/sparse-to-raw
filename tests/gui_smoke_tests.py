@@ -13,8 +13,11 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from sparse_to_raw_gui import (  # noqa: E402
+    BatchWorkerObject,
     ConversionWorkerObject,
     MainWindow,
+    format_speed,
+    resource_path,
     suggested_output_path,
     validate_paths,
 )
@@ -124,6 +127,103 @@ class SparseToRawGuiTests(unittest.TestCase):
             self.assertEqual(results[0]["output_size_bytes"], len(raw))
             self.assertTrue(any(item.get("percent") == 100 for item in progress))
             self.assertTrue(any("общей контрольной суммы" in message.lower() for _, message in events))
+
+
+    def test_speed_units_support_decimal_binary_and_bits(self) -> None:
+        self.assertEqual(format_speed(1_000_000, "MB/s", "en"), "1.00 MB/s")
+        self.assertEqual(format_speed(1_048_576, "MiB/s", "en"), "1.00 MiB/s")
+        self.assertEqual(format_speed(1_000_000, "Mbit/s", "en"), "8.00 Mbit/s")
+
+    def test_language_switch_and_settings_widgets(self) -> None:
+        window = MainWindow()
+        try:
+            english_index = window.language_combo.findData("en")
+            window.language_combo.setCurrentIndex(english_index)
+            self.assertEqual(window.main_heading.text(), "Image conversion")
+            self.assertEqual(window.convert_button.text(), "CONVERT")
+            window.speed_combo.setCurrentIndex(window.speed_combo.findData("Mbit/s"))
+            window.language_combo.setCurrentIndex(window.language_combo.findData("ru"))
+            self.assertEqual(window.main_heading.text(), "Преобразование образа")
+            self.assertIn(window.speed_combo.currentData(), {"MB/s", "MiB/s", "Mbit/s"})
+            self.assertGreaterEqual(window.source_browse_button.iconSize().width(), 20)
+            self.assertTrue(resource_path("assets/sparse-to-raw.ico").is_file())
+        finally:
+            window.close()
+        reopened = MainWindow()
+        try:
+            self.assertEqual(reopened.language, "ru")
+            self.assertEqual(reopened.speed_unit, "Mbit/s")
+            reopened.speed_combo.setCurrentIndex(reopened.speed_combo.findData("MiB/s"))
+        finally:
+            reopened.close()
+
+    def test_recent_file_list_is_most_recent_first_and_bounded(self) -> None:
+        window = MainWindow()
+        try:
+            for i in range(15):
+                window.add_recent(str(Path(tempfile.gettempdir()) / f"recent-{i}.img"))
+            self.assertEqual(len(window.recent_files), 12)
+            self.assertTrue(window.recent_files[0].endswith("recent-14.img"))
+            self.assertTrue(window.recent_files[-1].endswith("recent-3.img"))
+        finally:
+            window.close()
+
+    def test_inspection_worker_returns_metadata_without_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "input.sparse"
+            raw = b"DATA"
+            header = SPARSE_HEADER.pack(SPARSE_MAGIC, 1, 0, SPARSE_HEADER.size, 12, 4, 1, 1, zlib.crc32(raw) & 0xFFFFFFFF)
+            source.write_bytes(header + struct.pack("<HHII", 0xCAC1, 0, 1, 16) + raw)
+            worker = ConversionWorkerObject(source, None, False, operation="inspect")
+            results: list[dict] = []
+            failures: list[str] = []
+            worker.succeeded.connect(results.append)
+            worker.failed.connect(failures.append)
+            worker.run()
+            self.assertEqual(failures, [])
+            self.assertEqual(results[0]["raw_size_bytes"], 4)
+            self.assertEqual(results[0]["chunk_counts"]["RAW"], 1)
+            self.assertFalse((root / "input_raw.img").exists())
+
+    def test_batch_worker_converts_sequentially_and_writes_json_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "queued.sparse"
+            raw = b"DATA"
+            header = SPARSE_HEADER.pack(SPARSE_MAGIC, 1, 0, SPARSE_HEADER.size, 12, 4, 1, 1, zlib.crc32(raw) & 0xFFFFFFFF)
+            source.write_bytes(header + struct.pack("<HHII", 0xCAC1, 0, 1, 16) + raw)
+            output = root / "out"
+            output.mkdir()
+            worker = BatchWorkerObject([source], output, False)
+            reports: list[dict] = []
+            worker.finished_report.connect(reports.append)
+            worker.run()
+            self.assertEqual((output / "queued_raw.img").read_bytes(), raw)
+            self.assertEqual(reports[0]["summary"]["success"], 1)
+            self.assertTrue(Path(reports[0]["report_path"]).is_file())
+            saved = __import__("json").loads(Path(reports[0]["report_path"]).read_text(encoding="utf-8"))
+            self.assertEqual(saved["items"][0]["status"], "success")
+
+
+    def test_batch_worker_rejects_duplicate_output_names(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            first_dir = root / "one"
+            second_dir = root / "two"
+            output = root / "out"
+            first_dir.mkdir(); second_dir.mkdir(); output.mkdir()
+            raw = b"DATA"
+            header = SPARSE_HEADER.pack(SPARSE_MAGIC, 1, 0, SPARSE_HEADER.size, 12, 4, 1, 1, zlib.crc32(raw) & 0xFFFFFFFF)
+            payload = header + struct.pack("<HHII", 0xCAC1, 0, 1, 16) + raw
+            first = first_dir / "same.sparse"; second = second_dir / "same.sparse"
+            first.write_bytes(payload); second.write_bytes(payload)
+            worker = BatchWorkerObject([first, second], output, True)
+            reports: list[dict] = []
+            worker.finished_report.connect(reports.append)
+            worker.run()
+            self.assertEqual(reports[0]["summary"]["failed"], 2)
+            self.assertFalse((output / "same_raw.img").exists())
 
     def test_bundled_self_test_entrypoint(self) -> None:
         # Reuse the existing QApplication so a GUI package can be smoke-tested headlessly.
