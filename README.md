@@ -11,11 +11,7 @@ A small command-line utility to inspect Android Sparse Images and convert them t
 
 **Language:** English · [Русский](README.ru.md)
 
-<<<<<<< HEAD
-> **Статус: экспериментальная версия.** Реализация была побайтно сравнена с `simg2img.exe` на двух Android-образах: `super.img` размером около 3,6 ГБ из заводской прошивки Blackview и `userdata_exp.ai.img` размером около 6,83 ГБ из заводской прошивки Google Pixel. В обоих случаях различий не обнаружено. Это подтверждает корректность преобразования для данных файлов, но не заменяет независимое тестирование на разных образах и устройствах.
-=======
-> **Status: experimental.** The implementation was compared byte-for-byte with `simg2img.exe` using two Android images: `super.img` (approximately 3.6 GB) and `userdata_exp.ai.img` (approximately 6.83 GB) from Google Pixel factory firmware. No differences were found in either comparison. This confirms correct conversion for these specific files, but does not replace independent testing across different images and devices.
->>>>>>> 58855c0 (Release v0.4.0 with GUI improvements and new features)
+> **Status: experimental.** The implementation was compared byte-for-byte with `simg2img.exe` using two Android images: `super.img` (approximately 3.6 GB) from Blackview factory firmware and `userdata_exp.ai.img` (approximately 6.83 GB) from Google Pixel factory firmware. No differences were found in either comparison. This confirms correct conversion for these specific files, but does not replace independent testing across different images and devices.
 
 ## Features
 
@@ -50,17 +46,11 @@ A small command-line utility to inspect Android Sparse Images and convert them t
 
 The PySide6 GUI includes a dark futuristic theme, angular yellow frame, cyan accents, drag-and-drop, progress statistics, and diagnostics. Version `v0.4.0` adds Russian/English switching, saved preferences and recent files, speed units (MB/s, MiB/s, Mbit/s), Sparse analysis, a sequential batch queue, visual ordered merging of independent Sparse parts, a bundled application icon, and detailed JSON reports. It calls the same conversion and validation functions as the CLI.
 
-<<<<<<< HEAD
-![Главное окно sparse-to-raw GUI](sparse-to-raw-gui.png)
-
-Запуск GUI из исходников:
-=======
 ![Main window of sparse-to-raw GUI](sparse-to-raw-gui.png)
 
 For developer setup, headless tests, and PyInstaller packaging, see [GUI_DEVELOPMENT.md](GUI_DEVELOPMENT.md).
 
-Run it from source:
->>>>>>> 58855c0 (Release v0.4.0 with GUI improvements and new features)
+Run the GUI from source:
 
 ```bat
 py -m pip install -r requirements-gui.txt
@@ -144,7 +134,7 @@ Core tests cover all supported chunk types, CRC and image-checksum failures, mal
 ## Limitations and safety
 
 - This is an experimental project, not an official AOSP `simg2img` replacement.
-- Independent comparison was performed on one large real `super.img`; independently verify images used for critical work.
+- Independent comparison was performed on the two real images described above; independently verify images used for critical work.
 - This utility does not communicate with a phone or flash partitions. It only reads an input file and optionally creates an output file.
 - Check paths and free disk space before running. Multi-part merging temporarily needs space for the combined staging file plus the currently expanded part. Do not use an image after a validation error.
 - `super.img_sparsechunk.*` files are not auto-detected; use `--merge-parts` only for independent Sparse files and specify the correct part order manually.
