@@ -1,3 +1,4 @@
+
 name: Build Windows applications
 
 on:
@@ -82,27 +83,63 @@ jobs:
           --specpath build/spec/cli sparse_to_raw.py
 
       - name: Build GUI application folder
-        run: >-
-          python -m PyInstaller --noconfirm --clean --windowed --onedir
-          --name sparse-to-raw-gui --distpath dist/package --workpath build/gui-folder
-          --specpath build/spec/gui-folder --icon assets/sparse-to-raw.ico
-          --add-data "assets/sparse-to-raw.ico;assets" sparse_to_raw_gui.py
+        shell: pwsh
+        run: |
+          $icon = Join-Path $env:GITHUB_WORKSPACE "assets\sparse-to-raw.ico"
+
+          if (-not (Test-Path -LiteralPath $icon -PathType Leaf)) {
+            throw "Application icon not found: $icon"
+          }
+
+          Write-Host "Using application icon: $icon"
+
+          python -m PyInstaller --noconfirm --clean --windowed --onedir `
+            --name sparse-to-raw-gui `
+            --distpath dist/package `
+            --workpath build/gui-folder `
+            --specpath build/spec/gui-folder `
+            --icon "$icon" `
+            --add-data "${icon};assets" `
+            sparse_to_raw_gui.py
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "PyInstaller GUI folder build failed with exit code $LASTEXITCODE"
+          }
 
       - name: Zip GUI application folder
         shell: pwsh
         run: |
           $appFolder = "dist/package/sparse-to-raw-gui"
+
           if (-not (Test-Path -LiteralPath $appFolder -PathType Container)) {
             throw "GUI application folder was not created: $appFolder"
           }
+
           Compress-Archive -Path "$appFolder/*" -DestinationPath "dist/sparse-to-raw-gui-windows.zip" -Force
 
       - name: Build standalone GUI executable
-        run: >-
-          python -m PyInstaller --noconfirm --clean --windowed --onefile
-          --name sparse-to-raw-gui --distpath dist/onefile --workpath build/gui-onefile
-          --specpath build/spec/gui-onefile --icon assets/sparse-to-raw.ico
-          --add-data "assets/sparse-to-raw.ico;assets" sparse_to_raw_gui.py
+        shell: pwsh
+        run: |
+          $icon = Join-Path $env:GITHUB_WORKSPACE "assets\sparse-to-raw.ico"
+
+          if (-not (Test-Path -LiteralPath $icon -PathType Leaf)) {
+            throw "Application icon not found: $icon"
+          }
+
+          Write-Host "Using application icon: $icon"
+
+          python -m PyInstaller --noconfirm --clean --windowed --onefile `
+            --name sparse-to-raw-gui `
+            --distpath dist/onefile `
+            --workpath build/gui-onefile `
+            --specpath build/spec/gui-onefile `
+            --icon "$icon" `
+            --add-data "${icon};assets" `
+            sparse_to_raw_gui.py
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "PyInstaller standalone GUI build failed with exit code $LASTEXITCODE"
+          }
 
       - name: Smoke-test bundled GUI without Python on PATH
         shell: pwsh
@@ -111,9 +148,11 @@ jobs:
         run: |
           # Remove only Python and Python/Scripts directories, preserving normal Windows PATH entries.
           $pythonDirs = @()
+
           if ($env:pythonLocation) {
             $pythonDirs += [System.IO.Path]::GetFullPath($env:pythonLocation).TrimEnd('\')
           }
+
           $pythonDirs += @(
             Get-Command python.exe -All -ErrorAction SilentlyContinue |
               Where-Object { $_.CommandType -eq "Application" } |
@@ -121,22 +160,29 @@ jobs:
               Where-Object { $_ } |
               ForEach-Object { [System.IO.Path]::GetFullPath($_).TrimEnd('\') }
           )
+
           $pythonDirs = @($pythonDirs | Sort-Object -Unique)
           $removePaths = @()
+
           foreach ($pythonDir in $pythonDirs) {
             $removePaths += $pythonDir
             $removePaths += (Join-Path $pythonDir "Scripts").TrimEnd('\')
           }
+
           $removePaths = @($removePaths | Sort-Object -Unique)
+
           $env:PATH = (($env:PATH -split ';') | Where-Object {
             $entry = $_.Trim().Trim('"')
             if (-not $entry) { return $false }
+
             $fullEntry = [System.IO.Path]::GetFullPath($entry).TrimEnd('\')
+
             foreach ($removePath in $removePaths) {
               if ([string]::Equals($fullEntry, $removePath, [System.StringComparison]::OrdinalIgnoreCase)) {
                 return $false
               }
             }
+
             return $true
           }) -join ';'
 
@@ -200,13 +246,16 @@ jobs:
             "dist/onefile/sparse-to-raw-gui.exe",
             "dist/sparse-to-raw-gui-windows.zip"
           )
+
           foreach ($file in $files) {
             if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
               throw "Expected release asset is missing: $file"
             }
+
             if ((Get-Item -LiteralPath $file).Length -le 0) {
               throw "Expected release asset is empty: $file"
             }
+
             Write-Host ("Verified {0} ({1} bytes)" -f $file, (Get-Item -LiteralPath $file).Length)
           }
 
