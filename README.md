@@ -46,7 +46,7 @@ A small command-line utility to inspect Android Sparse Images and convert them t
 
 The PySide6 GUI includes a dark futuristic theme, angular yellow frame, cyan accents, drag-and-drop, progress statistics, and diagnostics. Version `v0.4.0` adds Russian/English switching, saved preferences and recent files, speed units (MB/s, MiB/s, Mbit/s), Sparse analysis, a sequential batch queue, visual ordered merging of independent Sparse parts, a bundled application icon, and detailed JSON reports. It calls the same conversion and validation functions as the CLI.
 
-![Main window of sparse-to-raw GUI](sparse-to-raw-gui.png)
+![Main window of sparse-to-raw GUI](screenshots/sparse-to-raw-gui-eng.png)
 
 For developer setup, headless tests, and PyInstaller packaging, see [GUI_DEVELOPMENT.md](GUI_DEVELOPMENT.md).
 
