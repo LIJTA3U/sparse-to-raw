@@ -36,6 +36,7 @@ from sparse_to_raw import (
     ConversionCancelled,
     _read_declared_raw_size,
     convert_sparse_to_raw,
+    discover_sparse_parts,
     inspect_sparse,
     merge_sparse_to_raw,
 )
@@ -68,12 +69,21 @@ I18N: dict[str, dict[str, str]] = {
         "status_cancelled": "ОТМЕНЕНО", "ready": "Ожидание", "done": "Готово",
         "analyze_title": "Анализ Sparse-образа", "queue_title": "Пакетная конвертация",
         "merge_title": "Объединение Sparse-частей", "add_files": "Добавить файлы…",
+        "discover_folder": "Найти части в папке…", "discover_no_groups": "В выбранной папке не найдены файлы с шаблоном Sparsechunk.",
+        "discover_choose_title": "Найдено несколько наборов", "discover_choose_prompt": "Выберите набор Sparse-частей:",
+        "discover_ready_status": "ЗАГОЛОВКИ ПРОВЕРЕНЫ", "discover_check_status": "НУЖНА ПРОВЕРКА",
+        "discover_not_ready": "Автоматически добавить этот набор нельзя: найдены пропуски, дубликаты или некорректные заголовки.\n\n{details}\n\nПроверьте файлы и добавьте их вручную только после проверки.",
+        "discover_loaded": "Автоматически найдено и добавлено частей: {count}\nНабор: {label}\nОжидаемый RAW-размер по заголовкам: {size}\nЗаголовки проверены; полная проверка данных и CRC32 выполняется при объединении.",
+        "discover_missing": "Пропущены индексы частей: {indices}", "discover_duplicates": "Повторяющиеся индексы частей: {indices}",
+        "discover_header_errors": "Ошибки заголовков:\n{details}", "discover_block_sizes": "Обнаружены разные размеры блока: {sizes}",
+        "discover_min_parts_issue": "Для объединения нужны минимум два независимых Sparse-файла.", "discover_unknown_issue": "Неизвестная ошибка проверки.",
+        "discover_nothing_new": "Подходящий набор найден, но все его файлы уже добавлены.",
         "remove": "Удалить", "clear": "Очистить", "move_up": "Вверх", "move_down": "Вниз",
         "output_folder": "Папка назначения", "choose_folder": "Выбрать…", "run_queue": "Запустить очередь",
         "start_analysis": "Проверить образ", "start_merge": "Объединить части", "source_file": "Входной файл",
         "save_json": "Сохранить JSON…", "overwrite": "Разрешить перезапись существующих файлов",
         "queue_hint": "Файлы будут обрабатываться последовательно. Ошибка одного файла не остановит остальные.",
-        "merge_hint": "Добавьте самостоятельные Sparse-файлы в правильном порядке. Каждый файл должен иметь собственный заголовок.",
+        "merge_hint": "Добавьте независимые Sparse-файлы вручную или найдите набор в папке. Каждый файл должен иметь собственный заголовок.",
         "analysis_ready": "Выберите файл и нажмите «Проверить образ».", "result": "Результат",
         "file": "Файл", "state": "Состояние", "raw_size": "RAW-размер", "chunks_count": "Чанков",
         "language_ru": "Русский", "language_en": "English", "speed_mb": "МБ/с (десятичные)",
@@ -102,12 +112,21 @@ I18N: dict[str, dict[str, str]] = {
         "status_cancelled": "CANCELLED", "ready": "Ready", "done": "Done",
         "analyze_title": "Sparse image analysis", "queue_title": "Batch conversion",
         "merge_title": "Merge Sparse parts", "add_files": "Add files…",
+        "discover_folder": "Find parts in folder…", "discover_no_groups": "No files matching a Sparsechunk naming pattern were found in the selected folder.",
+        "discover_choose_title": "Multiple sets found", "discover_choose_prompt": "Choose a Sparse part set:",
+        "discover_ready_status": "HEADERS CHECKED", "discover_check_status": "CHECK REQUIRED",
+        "discover_not_ready": "This set cannot be added automatically: missing indices, duplicate indices or invalid headers were detected.\n\n{details}\n\nReview the files and add them manually only after checking them.",
+        "discover_loaded": "Automatically found and added parts: {count}\nSet: {label}\nHeader-declared RAW size: {size}\nHeaders were checked; full payload and CRC32 validation will run during merge.",
+        "discover_missing": "Missing part indices: {indices}", "discover_duplicates": "Duplicate part indices: {indices}",
+        "discover_header_errors": "Sparse header errors:\n{details}", "discover_block_sizes": "Different block sizes were found: {sizes}",
+        "discover_min_parts_issue": "At least two independent Sparse files are required.", "discover_unknown_issue": "Unknown validation issue.",
+        "discover_nothing_new": "A matching set was found, but all of its files are already in the list.",
         "remove": "Remove", "clear": "Clear", "move_up": "Move up", "move_down": "Move down",
         "output_folder": "Output folder", "choose_folder": "Choose…", "run_queue": "Run queue",
         "start_analysis": "Verify image", "start_merge": "Merge parts", "source_file": "Input file",
         "save_json": "Save JSON…", "overwrite": "Allow overwriting existing files",
         "queue_hint": "Files are processed sequentially. A failed file will not stop the remaining queue.",
-        "merge_hint": "Add standalone Sparse files in the correct order. Each file must have its own header.",
+        "merge_hint": "Add standalone Sparse files manually or find a set in a folder. Each file must have its own header.",
         "analysis_ready": "Choose a file and click “Verify image”.", "result": "Result",
         "file": "File", "state": "State", "raw_size": "RAW size", "chunks_count": "Chunks",
         "language_ru": "Русский", "language_en": "English", "speed_mb": "MB/s (decimal)",
@@ -442,12 +461,12 @@ class AnalysisDialog(QDialog):
         self.setWindowTitle(parent.t("analyze_title")); self.resize(760, 560); self.setModal(False)
         layout = QVBoxLayout(self); form = QHBoxLayout()
         self.input_edit = QLineEdit(initial_path); self.input_edit.setPlaceholderText(parent.t("source_placeholder")); form.addWidget(self.input_edit, 1)
-        browse = QPushButton(parent.t("browse")); browse.setIcon(parent.icon_for("SP_DialogOpenButton")); browse.setIconSize(parent.icon_size); form.addWidget(browse)
+        browse = QPushButton(parent.t("browse")); browse.setIcon(parent.icon_for("SP_DialogOpenButton")); browse.setIconSize(QSize(parent.icon_size, parent.icon_size)); form.addWidget(browse)
         browse.clicked.connect(self._browse); layout.addLayout(form)
-        self.analyze_button = QPushButton(parent.t("start_analysis")); self.analyze_button.setIcon(parent.icon_for("SP_FileDialogContentsView")); self.analyze_button.setIconSize(parent.icon_size); layout.addWidget(self.analyze_button)
+        self.analyze_button = QPushButton(parent.t("start_analysis")); self.analyze_button.setIcon(parent.icon_for("SP_FileDialogContentsView")); self.analyze_button.setIconSize(QSize(parent.icon_size, parent.icon_size)); layout.addWidget(self.analyze_button)
         self.progress = QProgressBar(); self.progress.setRange(0,100); layout.addWidget(self.progress)
         self.output = QTextEdit(); self.output.setReadOnly(True); self.output.setFont(QFont("Consolas", 9)); self.output.setPlaceholderText(parent.t("analysis_ready")); layout.addWidget(self.output, 1)
-        self.save_button = QPushButton(parent.t("save_json")); self.save_button.setIcon(parent.icon_for("SP_DialogSaveButton")); self.save_button.setIconSize(parent.icon_size); self.save_button.setEnabled(False)
+        self.save_button = QPushButton(parent.t("save_json")); self.save_button.setIcon(parent.icon_for("SP_DialogSaveButton")); self.save_button.setIconSize(QSize(parent.icon_size, parent.icon_size)); self.save_button.setEnabled(False)
         controls = QHBoxLayout(); controls.addWidget(self.save_button); controls.addStretch(); close = QPushButton("Close" if parent.language == "en" else "Закрыть"); close.clicked.connect(self.close); controls.addWidget(close); layout.addLayout(controls)
         self.analyze_button.clicked.connect(self._start); self.save_button.clicked.connect(self._save_report)
         self._apply_style()
@@ -502,15 +521,15 @@ class BatchQueueDialog(QDialog):
         self.list = QListWidget(); self.list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection); root.addWidget(self.list, 1)
         row = QHBoxLayout(); self.queue_mutation_buttons = []
         for text, icon, callback in [(parent.t("add_files"), "SP_DialogOpenButton", self._add_files), (parent.t("remove"), "SP_TrashIcon", self._remove), (parent.t("clear"), "SP_DialogResetButton", self.list.clear)]:
-            btn = QPushButton(text); btn.setIcon(parent.icon_for(icon)); btn.setIconSize(parent.icon_size); btn.clicked.connect(callback); row.addWidget(btn); self.queue_mutation_buttons.append(btn)
+            btn = QPushButton(text); btn.setIcon(parent.icon_for(icon)); btn.setIconSize(QSize(parent.icon_size, parent.icon_size)); btn.clicked.connect(callback); row.addWidget(btn); self.queue_mutation_buttons.append(btn)
         root.addLayout(row)
         folder_row = QHBoxLayout(); self.folder_edit = QLineEdit(str(parent.settings.value("queue_output_dir", str(Path.home() / "sparse-to-raw-output")))); folder_row.addWidget(QLabel(parent.t("output_folder"))); folder_row.addWidget(self.folder_edit,1)
-        browse = QPushButton(parent.t("choose_folder")); browse.setIcon(parent.icon_for("SP_DirOpenIcon")); browse.setIconSize(parent.icon_size); browse.clicked.connect(self._browse_folder); folder_row.addWidget(browse); root.addLayout(folder_row)
+        browse = QPushButton(parent.t("choose_folder")); browse.setIcon(parent.icon_for("SP_DirOpenIcon")); browse.setIconSize(QSize(parent.icon_size, parent.icon_size)); browse.clicked.connect(self._browse_folder); folder_row.addWidget(browse); root.addLayout(folder_row)
         self.overwrite = QCheckBox(parent.t("overwrite")); root.addWidget(self.overwrite)
         self.progress = QProgressBar(); self.progress.setRange(0,100); root.addWidget(self.progress)
         self.log_view = QTextEdit(); self.log_view.setReadOnly(True); self.log_view.setMaximumHeight(135); self.log_view.document().setMaximumBlockCount(1000); root.addWidget(self.log_view)
-        buttons = QHBoxLayout(); self.run_button = QPushButton(parent.t("run_queue")); self.run_button.setIcon(parent.icon_for("SP_MediaPlay")); self.run_button.setIconSize(parent.icon_size); buttons.addWidget(self.run_button)
-        self.cancel_button = QPushButton(parent.t("cancel")); self.cancel_button.setIcon(parent.icon_for("SP_MediaStop")); self.cancel_button.setIconSize(parent.icon_size); self.cancel_button.setEnabled(False); buttons.addWidget(self.cancel_button); buttons.addStretch()
+        buttons = QHBoxLayout(); self.run_button = QPushButton(parent.t("run_queue")); self.run_button.setIcon(parent.icon_for("SP_MediaPlay")); self.run_button.setIconSize(QSize(parent.icon_size, parent.icon_size)); buttons.addWidget(self.run_button)
+        self.cancel_button = QPushButton(parent.t("cancel")); self.cancel_button.setIcon(parent.icon_for("SP_MediaStop")); self.cancel_button.setIconSize(QSize(parent.icon_size, parent.icon_size)); self.cancel_button.setEnabled(False); buttons.addWidget(self.cancel_button); buttons.addStretch()
         close = QPushButton("Close" if parent.language == "en" else "Закрыть"); close.clicked.connect(self.close); buttons.addWidget(close); root.addLayout(buttons)
         self.run_button.clicked.connect(self._run); self.cancel_button.clicked.connect(self._cancel); self._apply_style()
     def _apply_style(self) -> None:
@@ -584,20 +603,126 @@ class MergeDialog(QDialog):
         root = QVBoxLayout(self); hint = QLabel(parent.t("merge_hint")); hint.setWordWrap(True); hint.setStyleSheet(f"color:{COLORS['muted']}"); root.addWidget(hint)
         self.parts = QListWidget(); self.parts.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection); root.addWidget(self.parts,1)
         actions = QHBoxLayout(); self.part_controls = []
-        controls = [(parent.t("add_files"), "SP_DialogOpenButton", self._add), (parent.t("remove"), "SP_TrashIcon", self._remove), (parent.t("move_up"), "SP_ArrowUp", self._up), (parent.t("move_down"), "SP_ArrowDown", self._down)]
+        controls = [
+            (parent.t("discover_folder"), "SP_DirOpenIcon", self._discover),
+            (parent.t("add_files"), "SP_DialogOpenButton", self._add),
+            (parent.t("remove"), "SP_TrashIcon", self._remove),
+            (parent.t("move_up"), "SP_ArrowUp", self._up),
+            (parent.t("move_down"), "SP_ArrowDown", self._down),
+        ]
         for label, icon_name, callback in controls:
-            button = QPushButton(label); button.setIcon(parent.icon_for(icon_name)); button.setIconSize(parent.icon_size); button.clicked.connect(callback); actions.addWidget(button); self.part_controls.append(button)
+            button = QPushButton(label); button.setIcon(parent.icon_for(icon_name)); button.setIconSize(QSize(parent.icon_size, parent.icon_size)); button.clicked.connect(callback); actions.addWidget(button); self.part_controls.append(button)
         root.addLayout(actions)
         out = QHBoxLayout(); out.addWidget(QLabel(parent.t("output_label"))); self.output_edit = QLineEdit(str(parent.settings.value("merge_output_path", str(Path.home()/"merged_raw.img")))); self.output_edit.textChanged.connect(lambda value: parent.settings.setValue("merge_output_path", value)); out.addWidget(self.output_edit,1)
-        browse = QPushButton(parent.t("browse")); browse.setIcon(parent.icon_for("SP_DialogSaveButton")); browse.setIconSize(parent.icon_size); browse.clicked.connect(self._browse_output); out.addWidget(browse); root.addLayout(out)
+        browse = QPushButton(parent.t("browse")); browse.setIcon(parent.icon_for("SP_DialogSaveButton")); browse.setIconSize(QSize(parent.icon_size, parent.icon_size)); browse.clicked.connect(self._browse_output); out.addWidget(browse); root.addLayout(out)
         self.progress = QProgressBar(); self.progress.setRange(0,100); root.addWidget(self.progress)
         self.log_view = QTextEdit(); self.log_view.setReadOnly(True); self.log_view.setMaximumHeight(125); root.addWidget(self.log_view)
-        buttons = QHBoxLayout(); self.run_button = QPushButton(parent.t("start_merge")); self.run_button.setIcon(parent.icon_for("SP_DialogApplyButton")); self.run_button.setIconSize(parent.icon_size); buttons.addWidget(self.run_button)
+        buttons = QHBoxLayout(); self.run_button = QPushButton(parent.t("start_merge")); self.run_button.setIcon(parent.icon_for("SP_DialogApplyButton")); self.run_button.setIconSize(QSize(parent.icon_size, parent.icon_size)); buttons.addWidget(self.run_button)
         self.cancel_button = QPushButton(parent.t("cancel")); self.cancel_button.setEnabled(False); self.cancel_button.clicked.connect(self._cancel); buttons.addWidget(self.cancel_button); self.save_report = QPushButton(parent.t("save_json")); self.save_report.setEnabled(False); self.save_report.clicked.connect(self._save_report); buttons.addWidget(self.save_report); buttons.addStretch()
         close = QPushButton("Close" if parent.language == "en" else "Закрыть"); close.clicked.connect(self.close); buttons.addWidget(close); root.addLayout(buttons)
         self.run_button.clicked.connect(self._run); self._apply_style()
     def _apply_style(self) -> None:
         self.setStyleSheet(f"QDialog{{background:{COLORS['background']};color:{COLORS['text']}}} QListWidget,QTextEdit,QLineEdit{{background:#07111b;color:{COLORS['text']};border:1px solid #29434f}} QPushButton{{background:#0a1b27;color:{COLORS['cyan']};border:1px solid #24505e;padding:6px;border-radius:4px}} QProgressBar{{background:#111d28;border:1px solid #24414e;height:14px}} QProgressBar::chunk{{background:{COLORS['cyan']}}}")
+    def _discover(self) -> None:
+        start_folder = str(self.main.settings.value("merge_source_folder", str(Path.home())))
+        folder = QFileDialog.getExistingDirectory(self, self.main.t("discover_folder"), start_folder)
+        if not folder:
+            return
+        self.main.settings.setValue("merge_source_folder", folder)
+        try:
+            result = discover_sparse_parts(folder)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(self, self.main.t("merge_title"), str(exc))
+            return
+
+        groups = result.get("groups", [])
+        if not groups:
+            QMessageBox.information(self, self.main.t("merge_title"), self.main.t("discover_no_groups"))
+            return
+
+        def describe(group: dict) -> str:
+            count = len(group.get("parts", []))
+            status_key = "discover_ready_status" if group.get("ready") else "discover_check_status"
+            status = self.main.t(status_key)
+            return f"{group['label']} — {count} — {status}"
+
+        selected_group = groups[0]
+        if len(groups) > 1:
+            choice, accepted = QInputDialog.getItem(
+                self,
+                self.main.t("discover_choose_title"),
+                self.main.t("discover_choose_prompt"),
+                [describe(group) for group in groups],
+                0,
+                False,
+            )
+            if not accepted:
+                return
+            selected_group = groups[[describe(group) for group in groups].index(choice)]
+
+        if not selected_group.get("ready"):
+            details = []
+            missing_ranges = selected_group.get("missing_ranges", [])
+            if missing_ranges:
+                labels = [str(start) if start == end else f"{start}-{end}" for start, end in missing_ranges]
+                details.append(self.main.t("discover_missing").format(indices=", ".join(labels)))
+            if selected_group.get("duplicate_indices"):
+                details.append(self.main.t("discover_duplicates").format(
+                    indices=", ".join(map(str, selected_group["duplicate_indices"]))
+                ))
+            if selected_group.get("header_errors"):
+                details.append(self.main.t("discover_header_errors").format(
+                    details="\n".join(selected_group["header_errors"])
+                ))
+            if len(selected_group.get("block_sizes", [])) > 1:
+                details.append(self.main.t("discover_block_sizes").format(
+                    sizes=", ".join(map(str, selected_group["block_sizes"]))
+                ))
+            if len(selected_group.get("parts", [])) < 2:
+                details.append(self.main.t("discover_min_parts_issue"))
+            QMessageBox.warning(
+                self,
+                self.main.t("merge_title"),
+                self.main.t("discover_not_ready").format(details="\n".join(details) or self.main.t("discover_unknown_issue")),
+            )
+            return
+
+        was_empty = self.parts.count() == 0
+        known = {
+            os.path.normcase(str(Path(self.parts.item(index).data(Qt.ItemDataRole.UserRole)).resolve()))
+            for index in range(self.parts.count())
+        }
+        added_paths: list[str] = []
+        for part in selected_group["parts"]:
+            path = str(Path(part["path"]).resolve())
+            path_key = os.path.normcase(path)
+            if path_key in known:
+                continue
+            item = QListWidgetItem(path)
+            item.setData(Qt.ItemDataRole.UserRole, path)
+            self.parts.addItem(item)
+            known.add(path_key)
+            added_paths.append(path)
+
+        for path in reversed(added_paths):
+            self.main.add_recent(path)
+
+        if added_paths:
+            if was_empty:
+                first_path = Path(selected_group["parts"][0]["path"])
+                output_path = str(first_path.parent / "merged_raw.img")
+                self.output_edit.setText(output_path)
+                self.main.settings.setValue("merge_output_path", output_path)
+            self.log_view.append(
+                self.main.t("discover_loaded").format(
+                    count=len(added_paths),
+                    label=selected_group["label"],
+                    size=format_bytes(selected_group["total_raw_size_bytes"], self.main.language),
+                )
+            )
+        else:
+            QMessageBox.information(self, self.main.t("merge_title"), self.main.t("discover_nothing_new"))
+
     def _add(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(self, self.main.t("add_files"), str(Path.home()), "Sparse images (*)")
         known = {self.parts.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.parts.count())}

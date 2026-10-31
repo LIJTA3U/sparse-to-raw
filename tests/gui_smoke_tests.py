@@ -10,12 +10,14 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from sparse_to_raw_gui import (  # noqa: E402
     BatchWorkerObject,
     ConversionWorkerObject,
     MainWindow,
+    MergeDialog,
     format_speed,
     resource_path,
     suggested_output_path,
@@ -156,6 +158,46 @@ class SparseToRawGuiTests(unittest.TestCase):
             reopened.speed_combo.setCurrentIndex(reopened.speed_combo.findData("MiB/s"))
         finally:
             reopened.close()
+
+    def test_merge_dialog_discovers_and_numerically_orders_sparse_parts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for index in [10, 2, 1, 0, 9, 8, 7, 6, 5, 4, 3]:
+                write_sparse_header(root / f"super.img_sparsechunk.{index}")
+
+            window = MainWindow()
+            dialog = MergeDialog(window)
+            try:
+                self.assertTrue(any(button.text() == window.t("discover_folder") for button in dialog.part_controls))
+                from unittest.mock import patch
+                with patch("sparse_to_raw_gui.QFileDialog.getExistingDirectory", return_value=str(root)):
+                    dialog._discover()
+                names = [Path(dialog.parts.item(i).data(Qt.ItemDataRole.UserRole)).name for i in range(dialog.parts.count())]
+                self.assertEqual(names, [f"super.img_sparsechunk.{index}" for index in range(11)])
+            finally:
+                dialog.close()
+                window.close()
+
+    def test_merge_dialog_does_not_auto_add_incomplete_sparse_set(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            write_sparse_header(root / "super.img_sparsechunk.0")
+            write_sparse_header(root / "super.img_sparsechunk.2")
+
+            window = MainWindow()
+            dialog = MergeDialog(window)
+            try:
+                from unittest.mock import patch
+                from PySide6.QtWidgets import QMessageBox
+                with patch("sparse_to_raw_gui.QFileDialog.getExistingDirectory", return_value=str(root)), \
+                     patch("sparse_to_raw_gui.QMessageBox.warning") as warning:
+                    dialog._discover()
+                self.assertEqual(dialog.parts.count(), 0)
+                warning.assert_called_once()
+                self.assertIn("1", warning.call_args.args[2])
+            finally:
+                dialog.close()
+                window.close()
 
     def test_recent_file_list_is_most_recent_first_and_bounded(self) -> None:
         window = MainWindow()

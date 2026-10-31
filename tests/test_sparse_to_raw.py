@@ -18,6 +18,7 @@ from sparse_to_raw import (
     MAGIC,
     SparseImageError,
     convert_sparse_to_raw,
+    discover_sparse_parts,
     inspect_sparse,
     merge_sparse_to_raw,
     main,
@@ -173,6 +174,115 @@ class SparseToRawTests(unittest.TestCase):
         result = inspect_sparse(self.input_path, calculate_sha256=True)
         self.assertEqual(result["sha256"], hashlib.sha256(raw_data).hexdigest())
 
+
+    def _write_discoverable_part(
+        self,
+        path: Path,
+        *,
+        block_size: int = BLOCK_SIZE,
+        raw_data: bytes | None = None,
+    ) -> None:
+        raw = raw_data if raw_data is not None else b"DATA" * (block_size // 4)
+        header = struct.pack(
+            HEADER_FMT,
+            MAGIC,
+            1,
+            0,
+            struct.calcsize(HEADER_FMT),
+            struct.calcsize(CHUNK_FMT),
+            block_size,
+            len(raw) // block_size,
+            1,
+            zlib.crc32(raw) & 0xFFFFFFFF,
+        )
+        payload = chunk(CHUNK_RAW, len(raw) // block_size, raw)
+        path.write_bytes(header + payload)
+
+    def test_discover_sparse_parts_sorts_indices_numerically(self) -> None:
+        for index in [10, 2, 1, 0, 9, 8, 7, 6, 5, 4, 3]:
+            self._write_discoverable_part(self.root / f"super.img_sparsechunk.{index}")
+        (self.root / "notes.txt").write_text("ignore", encoding="utf-8")
+        result = discover_sparse_parts(self.root)
+        self.assertEqual(result["group_count"], 1)
+        self.assertEqual(result["part_count"], 11)
+        group = result["groups"][0]
+        self.assertTrue(group["ready"])
+        self.assertEqual(group["indices"], list(range(11)))
+        self.assertEqual(
+            [Path(part["path"]).name for part in group["parts"]],
+            [f"super.img_sparsechunk.{index}" for index in range(11)],
+        )
+        self.assertEqual(group["total_raw_size_bytes"], 11 * len(b"DATA"))
+
+    def test_discover_sparse_parts_reports_missing_indices(self) -> None:
+        for index in [0, 2, 3]:
+            self._write_discoverable_part(self.root / f"super.img_sparsechunk.{index}")
+        group = discover_sparse_parts(self.root)["groups"][0]
+        self.assertEqual(group["missing_indices"], [1])
+        self.assertFalse(group["ready"])
+        self.assertTrue(any("Missing part indices: 1" in item for item in group["warnings"]))
+
+    def test_discover_sparse_parts_reports_duplicate_numeric_indices(self) -> None:
+        for name in ["super.img_sparsechunk.0", "super.img_sparsechunk.1", "super.img_sparsechunk.01"]:
+            self._write_discoverable_part(self.root / name)
+        group = discover_sparse_parts(self.root)["groups"][0]
+        self.assertEqual(group["duplicate_indices"], [1])
+        self.assertFalse(group["ready"])
+
+    def test_discover_sparse_parts_groups_different_prefixes(self) -> None:
+        for name in ["super.img_sparsechunk.0", "super.img_sparsechunk.1", "system.img_sparsechunk.0", "system.img_sparsechunk.1"]:
+            self._write_discoverable_part(self.root / name)
+        result = discover_sparse_parts(self.root)
+        self.assertEqual(result["group_count"], 2)
+        self.assertEqual([group["prefix"] for group in result["groups"]], ["super.img", "system.img"])
+        self.assertTrue(all(group["ready"] for group in result["groups"]))
+
+    def test_discover_sparse_parts_rejects_invalid_headers(self) -> None:
+        self._write_discoverable_part(self.root / "super.img_sparsechunk.0")
+        (self.root / "super.img_sparsechunk.1").write_bytes(b"NOPE" + b"\x00" * 24)
+        group = discover_sparse_parts(self.root)["groups"][0]
+        self.assertFalse(group["ready"])
+        self.assertEqual(len(group["errors"]), 1)
+        self.assertIn("Invalid sparse magic", group["errors"][0])
+
+    def test_discover_sparse_parts_rejects_mixed_block_sizes(self) -> None:
+        self._write_discoverable_part(self.root / "super.img_sparsechunk.0", block_size=4)
+        self._write_discoverable_part(self.root / "super.img_sparsechunk.1", block_size=8)
+        group = discover_sparse_parts(self.root)["groups"][0]
+        self.assertFalse(group["ready"])
+        self.assertTrue(any("different block sizes" in item for item in group["errors"]))
+
+    def test_discovered_sparse_parts_merge_in_numeric_order(self) -> None:
+        self._write_discoverable_part(self.root / "super.img_sparsechunk.1", raw_data=b"BBBB")
+        self._write_discoverable_part(self.root / "super.img_sparsechunk.0", raw_data=b"AAAA")
+        discovery = discover_sparse_parts(self.root)
+        sources = [part["path"] for part in discovery["groups"][0]["parts"]]
+        merge_sparse_to_raw(sources, self.output_path)
+        self.assertEqual(self.output_path.read_bytes(), b"AAAABBBB")
+
+    def test_discover_sparse_parts_supports_alternative_marker(self) -> None:
+        for index in [0, 1]:
+            self._write_discoverable_part(self.root / f"vendor.img.sparsechunk.{index}")
+        group = discover_sparse_parts(self.root)["groups"][0]
+        self.assertTrue(group["ready"])
+        self.assertEqual(group["marker"], ".sparsechunk.")
+
+    def test_discover_sparse_parts_bounds_missing_index_preview(self) -> None:
+        self._write_discoverable_part(self.root / "super.img_sparsechunk.0")
+        self._write_discoverable_part(self.root / "super.img_sparsechunk.1000000000")
+        group = discover_sparse_parts(self.root)["groups"][0]
+        self.assertFalse(group["ready"])
+        self.assertEqual(group["missing_count"], 999_999_999)
+        self.assertEqual(len(group["missing_indices"]), 256)
+        self.assertEqual(group["missing_ranges"], [[1, 999_999_999]])
+
+    def test_discover_sparse_parts_requires_directory(self) -> None:
+        file_path = self.root / "file.txt"
+        file_path.write_text("x", encoding="utf-8")
+        with self.assertRaises(NotADirectoryError):
+            discover_sparse_parts(file_path)
+        with self.assertRaises(FileNotFoundError):
+            discover_sparse_parts(self.root / "missing")
 
     def test_merge_independent_sparse_parts_in_supplied_order(self) -> None:
         first = self.root / "super.img_sparsechunk.0"

@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import struct
 import sys
 import tempfile
@@ -555,14 +556,20 @@ def inspect_sparse(
 
 
 
-def _read_declared_raw_size(input_path: str | Path) -> int:
-    """Read only enough of a sparse header to estimate the expanded size."""
+_SPARSE_PART_NAME_RE = re.compile(
+    r"^(?P<prefix>.+?)(?P<marker>_sparsechunk\.|\.sparsechunk\.|_sparse_chunk\.)(?P<index>\d+)$",
+    re.IGNORECASE,
+)
+
+
+def _read_sparse_part_header(input_path: str | Path) -> dict[str, int]:
+    """Read and validate the fixed/extended header of one independent Sparse part."""
     source = Path(input_path).expanduser().resolve()
     if not source.is_file():
         raise FileNotFoundError(f"Input file not found: {source}")
     with source.open("rb") as stream:
         header = _read_exact(stream, HEADER_SIZE, "sparse header")
-        magic, major, _minor, file_header_size, chunk_header_size, block_size, total_blocks, _chunks, _checksum = struct.unpack(
+        magic, major, minor, file_header_size, chunk_header_size, block_size, total_blocks, total_chunks, checksum = struct.unpack(
             HEADER_FMT, header
         )
         if magic != MAGIC:
@@ -576,7 +583,139 @@ def _read_declared_raw_size(input_path: str | Path) -> int:
         if block_size == 0 or block_size % 4:
             raise SparseImageError(f"Invalid block size in {source}: {block_size}")
         _read_exact(stream, file_header_size - HEADER_SIZE, "extended sparse header")
-        return total_blocks * block_size
+        return {
+            "major_version": major,
+            "minor_version": minor,
+            "file_header_size": file_header_size,
+            "chunk_header_size": chunk_header_size,
+            "block_size": block_size,
+            "total_blocks": total_blocks,
+            "total_chunks": total_chunks,
+            "image_checksum": checksum,
+            "raw_size_bytes": total_blocks * block_size,
+            "input_size_bytes": source.stat().st_size,
+        }
+
+
+def _read_declared_raw_size(input_path: str | Path) -> int:
+    """Read only enough of a sparse header to estimate the expanded size."""
+    return _read_sparse_part_header(input_path)["raw_size_bytes"]
+
+
+def discover_sparse_parts(directory: str | Path) -> dict[str, Any]:
+    """Discover and numerically order conventional Android sparsechunk files.
+
+    Only the selected directory is scanned (no recursive traversal). Supported
+    names include ``super.img_sparsechunk.0``, ``super.img.sparsechunk.0`` and
+    ``super.img_sparse_chunk.0``. Files are grouped by their shared prefix so
+    unrelated partition sets are never mixed.
+
+    The function validates each candidate's Sparse header and reports missing
+    or duplicate numeric indices. It does not fully decode payloads or validate
+    their CRCs; the normal merge operation remains responsible for full checks.
+    """
+    folder = Path(directory).expanduser().resolve()
+    if not folder.exists():
+        raise FileNotFoundError(f"Directory not found: {folder}")
+    if not folder.is_dir():
+        raise NotADirectoryError(f"Not a directory: {folder}")
+
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    for candidate in sorted(folder.iterdir(), key=lambda item: item.name.casefold()):
+        if not candidate.is_file():
+            continue
+        match = _SPARSE_PART_NAME_RE.match(candidate.name)
+        if match is None:
+            continue
+        prefix = match.group("prefix")
+        marker = match.group("marker")
+        key = (os.path.normcase(prefix), marker.casefold())
+        group = grouped.setdefault(key, {
+            "prefix": prefix,
+            "marker": marker,
+            "parts": [],
+        })
+        entry: dict[str, Any] = {
+            "path": str(candidate.resolve()),
+            "name": candidate.name,
+            "index": int(match.group("index")),
+            "input_size_bytes": candidate.stat().st_size,
+        }
+        try:
+            entry.update(_read_sparse_part_header(candidate))
+            entry["valid_header"] = True
+            entry["error"] = None
+        except (OSError, SparseImageError, ValueError) as exc:
+            entry["valid_header"] = False
+            entry["error"] = str(exc)
+        group["parts"].append(entry)
+
+    groups: list[dict[str, Any]] = []
+    for group in grouped.values():
+        parts = sorted(group["parts"], key=lambda part: (part["index"], part["name"].casefold(), part["name"]))
+        indices = [part["index"] for part in parts]
+        unique_indices = sorted(set(indices))
+        index_counts: dict[int, int] = {}
+        for index in indices:
+            index_counts[index] = index_counts.get(index, 0) + 1
+        duplicate_indices = sorted(index for index, count in index_counts.items() if count > 1)
+
+        # Keep the report bounded even if a malformed filename contains an enormous index.
+        missing_ranges: list[list[int]] = []
+        next_expected = 0
+        missing_indices: list[int] = []
+        missing_count = 0
+        for index in unique_indices:
+            if index > next_expected:
+                missing_ranges.append([next_expected, index - 1])
+                gap_size = index - next_expected
+                missing_count += gap_size
+                if len(missing_indices) < 256:
+                    take = min(gap_size, 256 - len(missing_indices))
+                    missing_indices.extend(range(next_expected, next_expected + take))
+            next_expected = index + 1
+
+        header_errors = [f"{part['name']}: {part['error']}" for part in parts if not part["valid_header"]]
+        errors = list(header_errors)
+        warnings: list[str] = []
+        if missing_count:
+            range_labels = [str(start) if start == end else f"{start}-{end}" for start, end in missing_ranges]
+            suffix = f" (+{missing_count - len(missing_indices)} more)" if missing_count > len(missing_indices) else ""
+            warnings.append("Missing part indices: " + ", ".join(range_labels) + suffix)
+        if duplicate_indices:
+            warnings.append("Duplicate part indices: " + ", ".join(map(str, duplicate_indices)))
+        block_sizes = sorted({part["block_size"] for part in parts if part.get("valid_header")})
+        if len(block_sizes) > 1:
+            errors.append("Sparse parts use different block sizes: " + ", ".join(map(str, block_sizes)))
+        valid_parts = [part for part in parts if part.get("valid_header")]
+        ready = len(parts) >= 2 and not errors and not missing_count and not duplicate_indices and len(valid_parts) == len(parts)
+        groups.append({
+            "prefix": group["prefix"],
+            "marker": group["marker"],
+            "label": f"{group['prefix']}{group['marker']}*",
+            "parts": parts,
+            "indices": indices,
+            "missing_indices": missing_indices,
+            "missing_ranges": missing_ranges,
+            "missing_count": missing_count,
+            "duplicate_indices": duplicate_indices,
+            "block_size": block_sizes[0] if len(block_sizes) == 1 else None,
+            "block_sizes": block_sizes,
+            "header_errors": header_errors,
+            "total_input_size_bytes": sum(part["input_size_bytes"] for part in parts),
+            "total_raw_size_bytes": sum(part.get("raw_size_bytes", 0) for part in valid_parts),
+            "errors": errors,
+            "warnings": warnings,
+            "ready": ready,
+        })
+
+    groups.sort(key=lambda group: (group["prefix"].casefold(), group["marker"].casefold()))
+    return {
+        "directory": str(folder),
+        "groups": groups,
+        "group_count": len(groups),
+        "part_count": sum(len(group["parts"]) for group in groups),
+    }
 
 
 def merge_sparse_to_raw(
