@@ -58,6 +58,22 @@ Pass all parts in the intended order. Every input must be a complete, independen
 
 Version 0.4.0 does not discover or numerically sort `super.img_sparsechunk.*` files automatically; the order must be specified by the user.
 
+## Verify the written RAW output (development branch)
+
+```bash
+python sparse_to_raw.py super.img super_raw.img --verify-output
+```
+
+For a merge:
+
+```bash
+python sparse_to_raw.py --merge-parts super.img_sparsechunk.0 super.img_sparsechunk.1 --output super_raw.img --verify-output
+```
+
+`--verify-output` is available on the current development branch. After the Sparse data and checksums have been validated and the RAW staging file has been closed, the program reads the staged RAW file again in bounded chunks. It compares the actual byte count and SHA-256 with the expected logical RAW contents computed while expanding the Sparse input. The destination is published only after this check succeeds. On mismatch, read error, or cancellation, the staging file is discarded and an existing destination is preserved.
+
+This verification adds a complete read pass and therefore increases disk I/O and elapsed time. It is separate from, and does not replace, validation of the Sparse headers and checksums. With `--json-report`, the `output_verification` object records the expected and actual sizes and hashes, verified byte count, duration, and result. The option is valid for conversion and `--merge-parts`, not `--info` or `--verify-only`. The published v0.4.0 binary does not include this development option.
+
 ## Hide the progress indicator
 
 ```bash
@@ -69,7 +85,7 @@ python sparse_to_raw.py super.img super_raw.img --quiet
 ```text
 usage: sparse_to_raw.py [-h] [--merge-parts SPARSE_FILE [SPARSE_FILE ...]]
                         [--output FILE] [--info | --verify-only] [--force]
-                        [--sha256] [--json-report FILE] [--quiet]
+                        [--sha256] [--verify-output] [--json-report FILE] [--quiet]
                         [input_sparse] [output_raw]
 ```
 
@@ -83,6 +99,7 @@ usage: sparse_to_raw.py [-h] [--merge-parts SPARSE_FILE [SPARSE_FILE ...]]
 | `--verify-only` | Validate structure/checksums without creating RAW |
 | `--force` | Allow replacing an existing destination or report |
 | `--sha256` | Calculate SHA-256 of logical RAW contents |
+| `--verify-output` | Re-read staged RAW and verify its size and logical-content SHA-256 before commit (development branch) |
 | `--json-report FILE` | Write a JSON report |
 | `--quiet` | Hide the progress indicator |
 

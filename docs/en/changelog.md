@@ -2,6 +2,18 @@
 
 This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased] — v0.5.0 development
+
+### Added
+- GUI discovery of independent Sparse part groups with numeric ordering and validation of gaps, duplicate indices, headers, and block sizes.
+- Shared preflight checks for output paths, write access, free disk space, merge staging needs, and batch output collisions.
+- Optional RAW read-back verification: verify staged output size and SHA-256 against expected logical contents before atomic commit.
+- `--verify-output` for CLI conversion and `--merge-parts`; verification details are included in JSON reports.
+- Saved GUI verification preference for single conversion, batch conversion, and Sparse merging.
+
+### Changed
+- Verification progress is reported as a separate read-back phase; failed or cancelled verification preserves an existing destination.
+
 ## [0.4.0] — released
 
 ### Added

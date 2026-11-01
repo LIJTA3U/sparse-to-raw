@@ -20,10 +20,11 @@ A streaming Android Sparse Image v1 inspector and converter that expands Sparse 
 - Protect existing output files by default; `--force` is required to replace them.
 - Report progress, throughput, processed bytes, and chunk counts.
 - Optionally calculate SHA-256 over the logical RAW contents and export JSON reports.
+- Verify a completed RAW staging file by re-reading it and comparing its size and SHA-256 with the expected logical contents (`--verify-output`, current development branch).
 - Merge independent Sparse images in an explicitly supplied order (`--merge-parts`).
 - Stream large images without loading the complete input or output into memory.
 - Use only the Python standard library for the CLI.
-- Provide a PySide6 GUI with Russian/English language selection, saved preferences, recent files, image analysis, sequential batch conversion, visual ordered merging, and JSON reports.
+- Provide a PySide6 GUI with Russian/English language selection, saved preferences, recent files, image analysis, sequential batch conversion, visual ordered merging, optional output verification, and JSON reports.
 
 `DONT_CARE` ranges are interpreted as zero bytes. The resulting logical RAW contents and size are correct; the filesystem may store zero ranges as sparse holes.
 
@@ -88,14 +89,15 @@ Merge independent Sparse files in the order supplied:
 py sparse_to_raw.py --merge-parts super.img_sparsechunk.0 super.img_sparsechunk.1 --output super_raw.img --sha256
 ```
 
-Each merge input must be a complete, independent Sparse image with its own header. This mode is not intended for arbitrary byte-level pieces cut from one Sparse file. The current release does not automatically discover or numerically sort `super.img_sparsechunk.*` files.
+Each merge input must be a complete, independent Sparse image with its own header. This mode is not intended for arbitrary byte-level pieces cut from one Sparse file. The v0.4.0 release does not automatically discover or numerically sort `super.img_sparsechunk.*` files. The current `main` branch adds GUI discovery and numeric ordering as part of the unreleased v0.5.0 development work.
 
-For all CLI options, examples, and exit behavior, see the [CLI guide](docs/en/cli-guide.md).
+For all CLI options, examples, and exit behavior, see the [CLI guide](docs/en/cli-guide.md). The current development branch also supports `--verify-output` to re-read the staged RAW result before it is committed.
 
 ## Documentation
 
 - [Installation](docs/en/installation.md)
 - [CLI guide](docs/en/cli-guide.md)
+- [RAW output verification](docs/en/output-verification.md)
 - [GUI guide](docs/en/gui-guide.md)
 - [Development and packaging](docs/en/development.md)
 - [Changelog](docs/en/changelog.md)
@@ -104,6 +106,10 @@ For all CLI options, examples, and exit behavior, see the [CLI guide](docs/en/cl
 - [Screenshots](docs/screenshots/)
 
 The [Russian README](README.ru.md) links to the Russian documentation in `docs/ru/`.
+
+## Current development
+
+The published v0.4.0 release remains available above. The `main` branch contains unreleased v0.5.0 development features: automatic GUI discovery and numeric ordering of Sparse parts, preflight disk-space/path checks, and optional read-back verification of the completed RAW staging file. These features are not part of the v0.4.0 release downloads yet.
 
 ## Tests
 

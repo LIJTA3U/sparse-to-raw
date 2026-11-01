@@ -58,6 +58,22 @@ py sparse_to_raw.py --merge-parts super.img_sparsechunk.0 super.img_sparsechunk.
 
 В версии 0.4.0 файлы `super.img_sparsechunk.*` автоматически не обнаруживаются и не сортируются по номеру: порядок нужно указать самостоятельно.
 
+## Проверка записанного RAW (ветка разработки)
+
+```bash
+python sparse_to_raw.py super.img super_raw.img --verify-output
+```
+
+Для объединения:
+
+```bash
+python sparse_to_raw.py --merge-parts super.img_sparsechunk.0 super.img_sparsechunk.1 --output super_raw.img --verify-output
+```
+
+Параметр `--verify-output` доступен в текущей ветке разработки. После проверки Sparse-данных и контрольных сумм, а также закрытия временного RAW, программа повторно читает этот файл ограниченными блоками. Фактическое количество байтов и SHA-256 сравниваются с ожидаемым логическим RAW-содержимым, вычисленным во время раскрытия Sparse. Выходной файл публикуется только после успешной проверки. При несовпадении хеша, ошибке чтения или отмене временный файл удаляется, а существующий результат сохраняется.
+
+Проверка добавляет полный проход чтения и увеличивает дисковую нагрузку и время операции. Она не заменяет проверку заголовков Sparse и контрольных сумм. При использовании `--json-report` объект `output_verification` содержит ожидаемый и фактический размеры и хеши, число проверенных байтов, длительность и результат. Параметр разрешён для обычной конвертации и `--merge-parts`, но не для `--info` или `--verify-only`. В опубликованной сборке v0.4.0 этого параметра ещё нет.
+
 ## Отключение индикатора прогресса
 
 ```bash
@@ -69,7 +85,7 @@ python sparse_to_raw.py super.img super_raw.img --quiet
 ```text
 usage: sparse_to_raw.py [-h] [--merge-parts SPARSE_FILE [SPARSE_FILE ...]]
                         [--output FILE] [--info | --verify-only] [--force]
-                        [--sha256] [--json-report FILE] [--quiet]
+                        [--sha256] [--verify-output] [--json-report FILE] [--quiet]
                         [input_sparse] [output_raw]
 ```
 
@@ -83,6 +99,7 @@ usage: sparse_to_raw.py [-h] [--merge-parts SPARSE_FILE [SPARSE_FILE ...]]
 | `--verify-only` | Проверить структуру и контрольные суммы без RAW |
 | `--force` | Разрешить замену существующего выходного файла или отчёта |
 | `--sha256` | Вычислить SHA-256 логического RAW-содержимого |
+| `--verify-output` | Повторно прочитать временный RAW и проверить размер и SHA-256 перед сохранением (ветка разработки) |
 | `--json-report FILE` | Сохранить JSON-отчёт |
 | `--quiet` | Скрыть индикатор прогресса |
 

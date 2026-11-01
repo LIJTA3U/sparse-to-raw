@@ -201,6 +201,59 @@ class SparseToRawGuiTests(unittest.TestCase):
                 dialog.close()
                 window.close()
 
+    def test_main_window_verification_option_is_enabled_by_default(self) -> None:
+        window = MainWindow()
+        try:
+            current = window.verify_output_check.isChecked()
+            self.assertTrue(window.verify_output_check.text())
+            window.verify_output_check.setChecked(not current)
+            self.assertEqual(window.settings.value("verify_output", type=bool), not current)
+            window.verify_output_check.setChecked(current)
+        finally:
+            window.close()
+
+    def test_main_conversion_passes_verification_setting_to_worker(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "input.sparse"
+            output = root / "output.raw"
+            window = MainWindow()
+            window.source_edit.setText(str(source))
+            window.output_edit.setText(str(output))
+            window.verify_output_check.setChecked(True)
+            fake_thread = SimpleNamespace(start=lambda: None, isRunning=lambda: False)
+            try:
+                with patch("sparse_to_raw_gui.validate_paths", return_value=(source, output, 4096)), \
+                     patch("sparse_to_raw_gui.preflight_output", return_value={"available_free_bytes": 8192, "required_free_bytes": 4096}), \
+                     patch("sparse_to_raw_gui.ConversionWorkerObject") as worker_factory, \
+                     patch("sparse_to_raw_gui.connect_worker", return_value=fake_thread):
+                    window._start_conversion()
+                    worker_factory.assert_called_once_with(source, output, False, verify_output=True)
+                    self.assertFalse(window.verify_output_check.isEnabled())
+            finally:
+                window._set_busy(False)
+                window._thread = None
+                window._worker = None
+                window.close()
+
+    def test_conversion_worker_returns_output_verification_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "input.sparse"
+            output = root / "output.raw"
+            raw_data = b"A" * (4 * 4096)
+            header = SPARSE_HEADER.pack(SPARSE_MAGIC, 1, 0, SPARSE_HEADER.size, 12, 4096, 4, 1, zlib.crc32(raw_data) & 0xFFFFFFFF)
+            source.write_bytes(header + struct.pack("<HHII", 0xCAC1, 0, 4, 12 + len(raw_data)) + raw_data)
+            worker = ConversionWorkerObject(source, output, False, verify_output=True)
+            results: list[dict] = []
+            errors: list[str] = []
+            worker.succeeded.connect(results.append)
+            worker.failed.connect(errors.append)
+            worker.run()
+            self.assertFalse(errors, errors)
+            self.assertEqual(len(results), 1)
+            self.assertTrue(results[0]["output_verification"]["passed"])
+
     def test_recent_file_list_is_most_recent_first_and_bounded(self) -> None:
         window = MainWindow()
         try:
@@ -249,6 +302,24 @@ class SparseToRawGuiTests(unittest.TestCase):
             saved = __import__("json").loads(Path(reports[0]["report_path"]).read_text(encoding="utf-8"))
             self.assertEqual(saved["items"][0]["status"], "success")
 
+
+    def test_batch_worker_can_verify_each_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "batch.sparse"
+            output_dir = root / "out"
+            output_dir.mkdir()
+            raw_data = b"B" * (4 * 4096)
+            header = SPARSE_HEADER.pack(SPARSE_MAGIC, 1, 0, SPARSE_HEADER.size, 12, 4096, 4, 1, zlib.crc32(raw_data) & 0xFFFFFFFF)
+            source.write_bytes(header + struct.pack("<HHII", 0xCAC1, 0, 4, 12 + len(raw_data)) + raw_data)
+            worker = BatchWorkerObject([source], output_dir, False, verify_output=True)
+            reports: list[dict] = []
+            worker.finished_report.connect(reports.append)
+            worker.run()
+            self.assertEqual(len(reports), 1)
+            self.assertEqual(reports[0]["summary"]["success"], 1)
+            verification = reports[0]["items"][0]["result"]["output_verification"]
+            self.assertTrue(verification["passed"])
 
     def test_batch_worker_rejects_duplicate_output_names(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

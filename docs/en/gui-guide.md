@@ -13,6 +13,12 @@ The Windows GUI is built with PySide6 and calls the same conversion and validati
 
 If the destination already exists, the GUI asks before replacing it. The output is committed only after validation succeeds. A cancellation removes temporary output and preserves a pre-existing destination.
 
+## Verify the written RAW output (development branch)
+
+The main conversion window, batch queue, and Merge Sparse dialog provide a **Verify RAW after writing** option. The preference is saved between launches and is enabled by default in the current development branch. When enabled, the application re-reads the completed staging RAW file and compares its exact size and SHA-256 with the expected logical contents before publishing it at the destination.
+
+This adds an additional read pass and can noticeably increase disk activity and processing time for large images. If verification fails or the operation is cancelled, the staging file is removed and an existing destination is left unchanged. The result report includes the verification method, hashes, byte count, and duration. This feature is part of v0.5.0 development and is not included in the v0.4.0 release binaries.
+
 ## Language and speed units
 
 Use the language selector to switch between Russian and English. The speed selector supports decimal MB/s, binary MiB/s, and Mbit/s. Preferences, window geometry, last paths, and the recent input list are stored using Qt `QSettings`.

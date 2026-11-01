@@ -97,6 +97,10 @@ I18N: dict[str, dict[str, str]] = {
         "merge_min_parts": "Для объединения нужно выбрать не менее двух независимых Sparse-файлов.",
         "merge_same_output": "Выходной путь должен отличаться от путей всех входных файлов.",
         "output_collision": "Несколько входных файлов дают одинаковое имя результата. Переименуйте файлы или измените папку назначения.",
+        "verify_output": "Проверять RAW после записи (дополнительное чтение)",
+        "verify_output_tooltip": "Повторно прочитать временный RAW и сравнить размер и SHA-256 с ожидаемым логическим содержимым. Увеличивает объём чтения с диска.",
+        "verify_progress": "Проверка записанного RAW",
+        "verify_passed": "Проверка записанного RAW пройдена",
     },
     "en": {
         "window_title": "sparse-to-raw", "main_heading": "Image conversion",
@@ -140,6 +144,10 @@ I18N: dict[str, dict[str, str]] = {
         "merge_min_parts": "Select at least two independent Sparse files to merge.",
         "merge_same_output": "The output path must differ from every input path.",
         "output_collision": "Multiple inputs would produce the same output name. Rename the files or change the output folder.",
+        "verify_output": "Verify RAW after writing (additional read)",
+        "verify_output_tooltip": "Re-read the staged RAW file and compare its size and SHA-256 with the expected logical contents. This adds disk I/O.",
+        "verify_progress": "Verifying written RAW output",
+        "verify_passed": "Written RAW verification passed",
     },
 }
 
@@ -359,9 +367,11 @@ class ConversionWorkerObject(QObject):
     """Qt worker for conversion, inspection or ordered merge."""
     progress = Signal(dict); log = Signal(str, str); succeeded = Signal(dict); failed = Signal(str); cancelled = Signal(); finished = Signal()
     def __init__(self, source: Path | None, destination: Path | None, force: bool,
-                 operation: str = "convert", merge_sources: list[Path] | None = None) -> None:
+                 operation: str = "convert", merge_sources: list[Path] | None = None,
+                 verify_output: bool = False) -> None:
         super().__init__(); self.source = source; self.destination = destination; self.force = force
-        self.operation = operation; self.merge_sources = merge_sources or []; self._cancel_event = threading.Event()
+        self.operation = operation; self.merge_sources = merge_sources or []
+        self.verify_output = bool(verify_output); self._cancel_event = threading.Event()
     @Slot()
     def run(self) -> None:
         try:
@@ -369,13 +379,19 @@ class ConversionWorkerObject(QObject):
                       "cancel_requested": self._cancel_event.is_set, "calculate_sha256": True}
             if self.operation == "convert":
                 assert self.source is not None and self.destination is not None
-                result = convert_sparse_to_raw(self.source, self.destination, force=self.force, **kwargs)
+                result = convert_sparse_to_raw(
+                    self.source, self.destination, force=self.force,
+                    verify_output=self.verify_output, **kwargs
+                )
             elif self.operation == "inspect":
                 assert self.source is not None
                 result = inspect_sparse(self.source, mode="info", **kwargs)
             elif self.operation == "merge":
                 assert self.destination is not None
-                result = merge_sparse_to_raw(self.merge_sources, self.destination, force=self.force, **kwargs)
+                result = merge_sparse_to_raw(
+                    self.merge_sources, self.destination, force=self.force,
+                    verify_output=self.verify_output, **kwargs
+                )
             else:
                 raise ValueError(f"Unknown worker operation: {self.operation}")
         except ConversionCancelled: self.cancelled.emit()
@@ -388,9 +404,10 @@ class ConversionWorkerObject(QObject):
 
 class BatchWorkerObject(QObject):
     progress = Signal(dict); log = Signal(str, str); item_finished = Signal(int, dict); finished_report = Signal(dict); finished = Signal()
-    def __init__(self, sources: list[Path], output_dir: Path, overwrite: bool) -> None:
+    def __init__(self, sources: list[Path], output_dir: Path, overwrite: bool,
+                 verify_output: bool = False) -> None:
         super().__init__(); self.sources = sources; self.output_dir = output_dir; self.overwrite = overwrite
-        self._cancel_event = threading.Event()
+        self.verify_output = bool(verify_output); self._cancel_event = threading.Event()
     @Slot()
     def run(self) -> None:
         started = datetime.now()
@@ -459,6 +476,7 @@ class BatchWorkerObject(QObject):
 
                         result = convert_sparse_to_raw(
                             source, destination, force=self.overwrite, calculate_sha256=True,
+                            verify_output=self.verify_output,
                             progress_callback=per_file_progress, event_callback=self.log.emit,
                             cancel_requested=self._cancel_event.is_set,
                         )
@@ -586,6 +604,11 @@ class BatchQueueDialog(QDialog):
         folder_row = QHBoxLayout(); self.folder_edit = QLineEdit(str(parent.settings.value("queue_output_dir", str(Path.home() / "sparse-to-raw-output")))); folder_row.addWidget(QLabel(parent.t("output_folder"))); folder_row.addWidget(self.folder_edit,1)
         browse = QPushButton(parent.t("choose_folder")); browse.setIcon(parent.icon_for("SP_DirOpenIcon")); browse.setIconSize(QSize(parent.icon_size, parent.icon_size)); browse.clicked.connect(self._browse_folder); folder_row.addWidget(browse); root.addLayout(folder_row)
         self.overwrite = QCheckBox(parent.t("overwrite")); root.addWidget(self.overwrite)
+        self.verify_output = QCheckBox(parent.t("verify_output"))
+        self.verify_output.setChecked(bool(parent.settings.value("verify_output", True, type=bool)))
+        self.verify_output.setToolTip(parent.t("verify_output_tooltip"))
+        self.verify_output.toggled.connect(lambda checked: parent.settings.setValue("verify_output", checked))
+        root.addWidget(self.verify_output)
         self.progress = QProgressBar(); self.progress.setRange(0,100); root.addWidget(self.progress)
         self.log_view = QTextEdit(); self.log_view.setReadOnly(True); self.log_view.setMaximumHeight(135); self.log_view.document().setMaximumBlockCount(1000); root.addWidget(self.log_view)
         buttons = QHBoxLayout(); self.run_button = QPushButton(parent.t("run_queue")); self.run_button.setIcon(parent.icon_for("SP_MediaPlay")); self.run_button.setIconSize(QSize(parent.icon_size, parent.icon_size)); buttons.addWidget(self.run_button)
@@ -627,11 +650,14 @@ class BatchQueueDialog(QDialog):
             self._log("error", f"Batch preflight failed: {type(exc).__name__}: {exc}")
             return
         self.main.settings.setValue("queue_output_dir", str(output_dir))
-        self.list.setEnabled(False); self.folder_edit.setEnabled(False); self.overwrite.setEnabled(False)
+        self.list.setEnabled(False); self.folder_edit.setEnabled(False); self.overwrite.setEnabled(False); self.verify_output.setEnabled(False)
         for button in self.queue_mutation_buttons: button.setEnabled(False)
         self.run_button.setEnabled(False); self.cancel_button.setEnabled(True); self.progress.setValue(0)
         for i in range(self.list.count()): self.list.item(i).setText(f"{'ОЖИДАНИЕ' if self.main.language == 'ru' else 'WAITING'}  ·  {sources[i]}")
-        worker = BatchWorkerObject(sources, output_dir, self.overwrite.isChecked()); self.worker = worker
+        worker = BatchWorkerObject(
+            sources, output_dir, self.overwrite.isChecked(),
+            verify_output=self.verify_output.isChecked(),
+        ); self.worker = worker
         worker.log.connect(self._log); worker.progress.connect(self._progress); worker.item_finished.connect(self._item_finished); worker.finished_report.connect(self._report_done)
         thread = QThread(self); worker.moveToThread(thread); thread.started.connect(worker.run); worker.finished.connect(thread.quit); worker.finished.connect(worker.deleteLater); thread.finished.connect(thread.deleteLater); thread.finished.connect(self._thread_finished)
         self.thread = thread; thread.start()
@@ -651,7 +677,7 @@ class BatchQueueDialog(QDialog):
         if report.get("report_path"): self.log_view.append(f"Report: {report['report_path']}")
     def _thread_finished(self) -> None:
         self.thread = None; self.worker = None; self.run_button.setEnabled(True); self.cancel_button.setEnabled(False)
-        self.list.setEnabled(True); self.folder_edit.setEnabled(True); self.overwrite.setEnabled(True)
+        self.list.setEnabled(True); self.folder_edit.setEnabled(True); self.overwrite.setEnabled(True); self.verify_output.setEnabled(True)
         for button in self.queue_mutation_buttons: button.setEnabled(True)
         if self._close_when_finished: self.close()
         self.main._check_close_after_workers()
@@ -684,6 +710,11 @@ class MergeDialog(QDialog):
         root.addLayout(actions)
         out = QHBoxLayout(); out.addWidget(QLabel(parent.t("output_label"))); self.output_edit = QLineEdit(str(parent.settings.value("merge_output_path", str(Path.home()/"merged_raw.img")))); self.output_edit.textChanged.connect(lambda value: parent.settings.setValue("merge_output_path", value)); out.addWidget(self.output_edit,1)
         browse = QPushButton(parent.t("browse")); browse.setIcon(parent.icon_for("SP_DialogSaveButton")); browse.setIconSize(QSize(parent.icon_size, parent.icon_size)); browse.clicked.connect(self._browse_output); out.addWidget(browse); root.addLayout(out)
+        self.verify_output = QCheckBox(parent.t("verify_output"))
+        self.verify_output.setChecked(bool(parent.settings.value("verify_output", True, type=bool)))
+        self.verify_output.setToolTip(parent.t("verify_output_tooltip"))
+        self.verify_output.toggled.connect(lambda checked: parent.settings.setValue("verify_output", checked))
+        root.addWidget(self.verify_output)
         self.progress = QProgressBar(); self.progress.setRange(0,100); root.addWidget(self.progress)
         self.log_view = QTextEdit(); self.log_view.setReadOnly(True); self.log_view.setMaximumHeight(125); root.addWidget(self.log_view)
         buttons = QHBoxLayout(); self.run_button = QPushButton(parent.t("start_merge")); self.run_button.setIcon(parent.icon_for("SP_DialogApplyButton")); self.run_button.setIconSize(QSize(parent.icon_size, parent.icon_size)); buttons.addWidget(self.run_button)
@@ -839,10 +870,13 @@ class MergeDialog(QDialog):
             f"{format_bytes(preflight['available_free_bytes'], self.main.language)} free; "
             f"{format_bytes(preflight['required_free_bytes'], self.main.language)} required including merge staging and safety margin.",
         )
-        self.parts.setEnabled(False); self.output_edit.setEnabled(False)
+        self.parts.setEnabled(False); self.output_edit.setEnabled(False); self.verify_output.setEnabled(False)
         for button in self.part_controls: button.setEnabled(False)
         self.run_button.setEnabled(False); self.cancel_button.setEnabled(True); self.progress.setValue(0); self.result=None; self.save_report.setEnabled(False)
-        worker=ConversionWorkerObject(None,out,force,operation="merge",merge_sources=sources); self.worker=worker
+        worker=ConversionWorkerObject(
+            None, out, force, operation="merge", merge_sources=sources,
+            verify_output=self.verify_output.isChecked(),
+        ); self.worker=worker
         worker.progress.connect(lambda d:self.progress.setValue(int(d.get("percent",0))))
         worker.log.connect(self._log); worker.succeeded.connect(self._success); worker.failed.connect(self._failure); worker.cancelled.connect(lambda:self._log("warning","Merge cancelled; staged output discarded."))
         thread=connect_worker(worker,self,self._thread_finished); self.thread=thread; thread.start()
@@ -855,7 +889,7 @@ class MergeDialog(QDialog):
         QMessageBox.critical(self,self.main.t("merge_title"),f"{friendly}\n\nDetails: {message}")
     def _thread_finished(self) -> None:
         self.thread=None; self.worker=None; self.run_button.setEnabled(True); self.cancel_button.setEnabled(False)
-        self.parts.setEnabled(True); self.output_edit.setEnabled(True)
+        self.parts.setEnabled(True); self.output_edit.setEnabled(True); self.verify_output.setEnabled(True)
         for button in self.part_controls: button.setEnabled(True)
         if self._close_when_finished: self.close()
         self.main._check_close_after_workers()
@@ -883,6 +917,7 @@ class MainWindow(QWidget):
         if self.language not in I18N: self.language = "ru"
         self.speed_unit = str(self.settings.value("speed_unit", "MiB/s"))
         if self.speed_unit not in ("MB/s", "MiB/s", "Mbit/s"): self.speed_unit = "MiB/s"
+        self.verify_output_default = bool(self.settings.value("verify_output", True, type=bool))
         self.recent_files = [str(x) for x in self.settings.value("recent_files", [], type=list) if str(x)]
         self._last_progress = {}; self.last_result: dict[str, Any] | None = None
         self._status_label = I18N[self.language]["status_idle"]; self._status_color = "muted"
@@ -927,6 +962,10 @@ class MainWindow(QWidget):
         self.output_row=self._file_row("output_label",self.output_edit,self._browse_output,"output_browse_button")
         outer.addWidget(self.source_row); outer.addWidget(self.output_row)
         self.drop_zone=DropZone(); self.drop_zone.fileDropped.connect(self._set_source_path); self.drop_zone.browseRequested.connect(self._browse_source); outer.addWidget(self.drop_zone)
+        self.verify_output_check=QCheckBox()
+        self.verify_output_check.setChecked(self.verify_output_default)
+        self.verify_output_check.toggled.connect(self._verify_output_changed)
+        outer.addWidget(self.verify_output_check)
         action=QHBoxLayout(); action.setContentsMargins(130,0,130,0); action.setSpacing(12)
         self.convert_button=AngularButton(); self.convert_button.setToolTip("Validate Android Sparse Image and convert to RAW"); self.convert_button.clicked.connect(self._start_conversion)
         self.cancel_button=QPushButton(); self.cancel_button.setObjectName("cancelButton"); self.cancel_button.setIcon(self.icon_for("SP_MediaStop")); self.cancel_button.setIconSize(QSize(22,22)); self.cancel_button.setVisible(False); self.cancel_button.clicked.connect(self._request_cancel)
@@ -985,6 +1024,8 @@ class MainWindow(QWidget):
         self.source_edit.setPlaceholderText(d["source_placeholder"]); self.output_edit.setPlaceholderText(d["output_placeholder"])
         self.source_browse_button.setText(f"  {d['browse']}"); self.output_browse_button.setText(f"  {d['browse']}")
         self.drop_zone.set_language(self.language); self.convert_button.setText(d["convert"]); self.cancel_button.setText(d["cancel"])
+        self.verify_output_check.setText(d["verify_output"])
+        self.verify_output_check.setToolTip(d["verify_output_tooltip"])
         self.progress_title.setText(d["progress"]); self.stats_title.setText(d["stats"]); self.chunks_label.setText(f"{d['chunks']}\n0 / —"); self.size_label.setText(f"{d['size']}\n0 B / —")
         self.log_title.setText(d["log"]); self.clear_log_button.setText(d["clear_log"])
         self.analyze_button.setText(d["analyze"]); self.queue_button.setText(d["queue"]); self.merge_button.setText(d["merge"]); self.report_button.setText(d["save_report"])
@@ -1012,7 +1053,11 @@ class MainWindow(QWidget):
     def _save_settings(self) -> None:
         self.settings.setValue("language",self.language); self.settings.setValue("speed_unit",self.speed_unit)
         self.settings.setValue("last_input",self.source_edit.text().strip()); self.settings.setValue("last_output",self.output_edit.text().strip())
-        self.settings.setValue("recent_files",self.recent_files[:MAX_RECENT]); self.settings.setValue("window_size",self.size()); self.settings.setValue("window_position",self.pos()); self.settings.sync()
+        self.settings.setValue("recent_files",self.recent_files[:MAX_RECENT]); self.settings.setValue("verify_output",self.verify_output_check.isChecked()); self.settings.setValue("window_size",self.size()); self.settings.setValue("window_position",self.pos()); self.settings.sync()
+
+    def _verify_output_changed(self, checked: bool) -> None:
+        self.verify_output_default = bool(checked)
+        self.settings.setValue("verify_output", self.verify_output_default)
 
     def _language_changed(self,index:int) -> None:
         lang=self.language_combo.itemData(index)
@@ -1100,6 +1145,7 @@ class MainWindow(QWidget):
         self.source_edit.setEnabled(not busy); self.output_edit.setEnabled(not busy); self.convert_button.setEnabled(not busy)
         self.source_browse_button.setEnabled(not busy); self.output_browse_button.setEnabled(not busy)
         self.analyze_button.setEnabled(not busy); self.queue_button.setEnabled(not busy); self.merge_button.setEnabled(not busy); self.recent_combo.setEnabled(not busy)
+        self.verify_output_check.setEnabled(not busy)
         self.cancel_button.setVisible(busy); self.cancel_button.setEnabled(busy and self._worker is not None)
 
     def operation_running(self, exclude: QDialog | None = None) -> bool:
@@ -1142,7 +1188,7 @@ class MainWindow(QWidget):
         self.last_result=None; self.report_button.setEnabled(False); self.progress_bar.setValue(0); self.progress_percent.setText("0%"); self.speed_label.setText("Preparing…" if self.language=="en" else "Подготовка…")
         self.chunks_label.setText(f"{self.t('chunks')}\n0 / reading header…"); self.size_label.setText(f"{self.t('size')}\n0 B / {format_bytes(expected_size,self.language)}"); self._set_status(I18N[self.language]["status_preparing"],"cyan")
         self.append_log("info",f"Input: {source}"); self.append_log("info",f"Output: {destination}"); self.append_log("info",f"Expected RAW size: {format_bytes(expected_size,self.language)}")
-        worker=ConversionWorkerObject(source,destination,force); self._worker=worker; worker.progress.connect(self._on_progress); worker.log.connect(self.append_log); worker.succeeded.connect(self._on_success); worker.failed.connect(self._on_failure); worker.cancelled.connect(self._on_cancelled)
+        worker=ConversionWorkerObject(source,destination,force,verify_output=self.verify_output_check.isChecked()); self._worker=worker; worker.progress.connect(self._on_progress); worker.log.connect(self.append_log); worker.succeeded.connect(self._on_success); worker.failed.connect(self._on_failure); worker.cancelled.connect(self._on_cancelled)
         thread=connect_worker(worker,self,self._on_thread_finished); self._thread=thread; self._set_busy(True); thread.start()
 
     @Slot(dict)
@@ -1150,7 +1196,11 @@ class MainWindow(QWidget):
         self._last_progress=data; percent=int(data.get("percent",0)); self.progress_bar.setValue(max(0,min(100,percent))); self.progress_percent.setText(f"{percent}%")
         chunks=int(data.get("processed_chunks",0)); total=int(data.get("total_chunks",0)); self._total_chunks=total
         self.chunks_label.setText(f"{self.t('chunks')}\n{chunks:,} / {total:,}".replace(","," "))
-        processed=int(data.get("processed_bytes",0)); expected=int(data.get("expected_bytes",self._expected_size)); self.size_label.setText(f"{self.t('size')}\n{format_bytes(processed,self.language)} / {format_bytes(expected,self.language)}")
+        processed=int(data.get("processed_bytes",0)); expected=int(data.get("expected_bytes",self._expected_size))
+        if data.get("stage") == "verification":
+            self.size_label.setText(f"{self.t('verify_progress')}\n{format_bytes(processed,self.language)} / {format_bytes(expected,self.language)}")
+        else:
+            self.size_label.setText(f"{self.t('size')}\n{format_bytes(processed,self.language)} / {format_bytes(expected,self.language)}")
         speed=float(data.get("speed_bytes_per_second",0)); self.speed_label.setText(format_speed(speed,self.speed_unit,self.language) if speed>0 else ("Preparing…" if self.language=="en" else "Подготовка…"))
 
     @Slot(dict)
@@ -1161,8 +1211,12 @@ class MainWindow(QWidget):
                                "processed_bytes": size, "expected_bytes": expected,
                                "speed_bytes_per_second": old_speed}
         self.progress_bar.setValue(100); self.progress_percent.setText("100%"); self.chunks_label.setText(f"{self.t('chunks')}\n{chunks:,} / {chunks:,}".replace(","," ")); self.size_label.setText(f"{self.t('size')}\n{format_bytes(size,self.language)} / {format_bytes(expected,self.language)}"); self.speed_label.setText(self.t("done"))
-        destination=result.get("output") or self.output_edit.text(); self._set_status(I18N[self.language]["status_success"],"green"); self.append_log("success",f"Output verified: {destination}")
-        if result.get("sha256"): self.append_log("success",f"SHA-256: {result['sha256']}")
+        destination=result.get("output") or self.output_edit.text(); self._set_status(I18N[self.language]["status_success"],"green"); self.append_log("success",f"Output saved: {destination}")
+        verification=result.get("output_verification")
+        if verification and verification.get("passed"):
+            self.append_log("success", f"{self.t('verify_passed')}: {format_bytes(verification['verified_bytes'], self.language)}")
+            self.append_log("success", f"Verified output SHA-256: {verification['actual_sha256']}")
+        if result.get("sha256"): self.append_log("success",f"Logical RAW SHA-256: {result['sha256']}")
         self.add_recent(str(self.source_edit.text()))
         QMessageBox.information(self,self.t("window_title"),f"{self.t('analysis_ok')}\n\n{destination}\n\n{format_bytes(size,self.language)}")
     @Slot(str)

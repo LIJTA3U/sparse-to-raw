@@ -48,6 +48,10 @@ class InsufficientDiskSpaceError(OSError):
     """Raised when preflight estimates that an operation will not fit."""
 
 
+class OutputVerificationError(OSError):
+    """Raised when the staged RAW output does not match the expected contents."""
+
+
 ProgressCallback = Callable[[dict[str, Any]], None]
 EventCallback = Callable[[str, str], None]
 CancelCallback = Callable[[], bool]
@@ -115,6 +119,135 @@ def _atomic_write_text(path: Path, content: str, *, force: bool) -> None:
             pass
 
 
+def _verify_raw_file(
+    path: str | Path,
+    expected_size_bytes: int,
+    expected_sha256: str,
+    *,
+    progress_callback: ProgressCallback | None = None,
+    event_callback: EventCallback | None = None,
+    cancel_requested: CancelCallback | None = None,
+    show_progress: bool = False,
+) -> dict[str, Any]:
+    """Re-read a staged RAW file and verify its exact size and logical-content SHA-256.
+
+    The file is read in bounded chunks. Callers must run this before atomically
+    publishing the staging file so a failed verification never replaces an
+    existing destination.
+    """
+    target = Path(path)
+    started = time.monotonic()
+
+    def notify(level: str, message: str) -> None:
+        if event_callback is not None:
+            event_callback(level, message)
+
+    def check_cancelled() -> None:
+        if cancel_requested is not None and cancel_requested():
+            notify("warning", "RAW output verification cancelled; staged output will be discarded.")
+            raise ConversionCancelled("Output verification cancelled by user")
+
+    try:
+        before = target.stat()
+    except OSError as exc:
+        raise OutputVerificationError(f"Cannot inspect staged RAW output {target}: {exc}") from exc
+
+    if not target.is_file():
+        raise OutputVerificationError(f"Staged RAW output is not a regular file: {target}")
+    if before.st_size != expected_size_bytes:
+        raise OutputVerificationError(
+            f"RAW output size mismatch before verification: got {before.st_size} bytes, "
+            f"expected {expected_size_bytes} bytes"
+        )
+
+    digest = hashlib.sha256()
+    verified_bytes = 0
+    notify("info", f"Re-reading staged RAW output for SHA-256 verification: {target}")
+
+    def report_progress() -> None:
+        elapsed = max(time.monotonic() - started, 0.001)
+        if progress_callback is not None:
+            progress_callback({
+                "stage": "verification",
+                "verified_bytes": verified_bytes,
+                "expected_bytes": expected_size_bytes,
+                "speed_bytes_per_second": verified_bytes / elapsed,
+                "elapsed_seconds": elapsed,
+            })
+        if show_progress:
+            percent = 100 if expected_size_bytes == 0 else min(99, int(verified_bytes * 100 / expected_size_bytes))
+            print(
+                f"\rRAW verification: {percent:3d}% | {_format_size(verified_bytes)} / "
+                f"{_format_size(expected_size_bytes)} | {_format_size(int(verified_bytes / elapsed))}/s",
+                end="",
+                file=sys.stderr,
+                flush=True,
+            )
+
+    report_progress()
+    try:
+        with target.open("rb") as stream:
+            opened = os.fstat(stream.fileno())
+            if opened.st_size != expected_size_bytes:
+                raise OutputVerificationError(
+                    f"RAW output size changed before verification: got {opened.st_size} bytes, "
+                    f"expected {expected_size_bytes} bytes"
+                )
+            while True:
+                check_cancelled()
+                data = stream.read(COPY_BUFFER_SIZE)
+                if not data:
+                    break
+                verified_bytes += len(data)
+                if verified_bytes > expected_size_bytes:
+                    raise OutputVerificationError(
+                        f"RAW output grew during verification: read more than {expected_size_bytes} bytes"
+                    )
+                digest.update(data)
+                report_progress()
+            finished_fd = os.fstat(stream.fileno())
+    except OutputVerificationError:
+        raise
+    except OSError as exc:
+        raise OutputVerificationError(f"Could not read staged RAW output {target}: {exc}") from exc
+
+    actual_sha256 = digest.hexdigest()
+    try:
+        after = target.stat()
+    except OSError as exc:
+        raise OutputVerificationError(f"Cannot re-inspect staged RAW output {target}: {exc}") from exc
+
+    identity_before = (getattr(before, "st_ino", 0), before.st_size, before.st_mtime_ns)
+    identity_after = (getattr(after, "st_ino", 0), after.st_size, after.st_mtime_ns)
+    identity_fd = (getattr(finished_fd, "st_ino", 0), finished_fd.st_size, finished_fd.st_mtime_ns)
+    if identity_before != identity_after or identity_fd != identity_after:
+        raise OutputVerificationError("RAW output changed while it was being verified")
+    if verified_bytes != expected_size_bytes:
+        raise OutputVerificationError(
+            f"RAW output verification read {verified_bytes} bytes, expected {expected_size_bytes} bytes"
+        )
+    if actual_sha256 != expected_sha256:
+        notify("error", "RAW output SHA-256 does not match the logical Sparse contents.")
+        raise OutputVerificationError(
+            f"RAW output SHA-256 mismatch: expected {expected_sha256}, got {actual_sha256}"
+        )
+
+    elapsed = max(time.monotonic() - started, 0.0)
+    report = {
+        "enabled": True,
+        "passed": True,
+        "method": "sha256",
+        "expected_size_bytes": expected_size_bytes,
+        "actual_size_bytes": verified_bytes,
+        "expected_sha256": expected_sha256,
+        "actual_sha256": actual_sha256,
+        "verified_bytes": verified_bytes,
+        "duration_seconds": round(elapsed, 6),
+    }
+    notify("success", f"RAW output verification passed: {_format_size(verified_bytes)} · SHA-256 {actual_sha256}")
+    return report
+
+
 def _process_sparse(
     input_path: str | Path,
     output_path: str | Path | None,
@@ -122,6 +255,7 @@ def _process_sparse(
     force: bool = False,
     show_progress: bool = False,
     calculate_sha256: bool = False,
+    verify_output: bool = False,
     mode: str = "convert",
     progress_callback: ProgressCallback | None = None,
     event_callback: EventCallback | None = None,
@@ -137,6 +271,9 @@ def _process_sparse(
     source = Path(input_path).expanduser().resolve()
     if not source.is_file():
         raise FileNotFoundError(f"Input file not found: {source}")
+
+    if verify_output and output_path is None:
+        raise ValueError("RAW output verification requires an output path")
 
     destination: Path | None = None
     if output_path is not None:
@@ -186,7 +323,12 @@ def _process_sparse(
         if progress_callback is None:
             return
         now = time.monotonic()
-        if raw_size == 0:
+        if verify_output:
+            # Reserve the second half of the progress range for the RAW re-read.
+            percent = 0 if raw_size == 0 else min(49, int(processed_bytes * 50 / raw_size))
+            if completed:
+                percent = 100
+        elif raw_size == 0:
             # A zero-byte image is only complete after its structural checks pass.
             percent = 100 if completed else 0
         else:
@@ -291,7 +433,7 @@ def _process_sparse(
             running_crc = 0
             output_blocks = 0
             chunk_counts = {name: 0 for name in CHUNK_NAMES.values()}
-            sha256 = hashlib.sha256() if calculate_sha256 else None
+            sha256 = hashlib.sha256() if (calculate_sha256 or verify_output) else None
 
             def consume_zeros(count: int) -> None:
                 nonlocal running_crc
@@ -445,6 +587,40 @@ def _process_sparse(
                     file=sys.stderr,
                 )
 
+            output_verification: dict[str, Any] | None = None
+            if verify_output:
+                if temp_path is None or sha256 is None:
+                    raise OutputVerificationError("A staged RAW output is unavailable for verification")
+                expected_digest = sha256.hexdigest()
+
+                def verification_progress(data: dict[str, Any]) -> None:
+                    if progress_callback is None:
+                        return
+                    verified = int(data["verified_bytes"])
+                    percent = 99 if raw_size == 0 else 50 + min(49, int(verified * 49 / raw_size))
+                    progress_callback({
+                        "processed_chunks": completed_chunks,
+                        "total_chunks": total_chunks,
+                        "processed_bytes": verified,
+                        "expected_bytes": raw_size,
+                        "percent": percent,
+                        "speed_bytes_per_second": data["speed_bytes_per_second"],
+                        "elapsed_seconds": data["elapsed_seconds"],
+                        "stage": "verification",
+                    })
+
+                output_verification = _verify_raw_file(
+                    temp_path,
+                    raw_size,
+                    expected_digest,
+                    progress_callback=verification_progress,
+                    event_callback=event_callback,
+                    cancel_requested=cancel_requested,
+                    show_progress=show_progress,
+                )
+                if show_progress:
+                    print(file=sys.stderr)
+
             result: dict[str, Any] = {
                 "mode": mode,
                 "input": str(source),
@@ -471,8 +647,10 @@ def _process_sparse(
             }
             if preflight_report is not None:
                 result["preflight"] = preflight_report
-            if sha256 is not None:
+            if calculate_sha256 and sha256 is not None:
                 result["sha256"] = sha256.hexdigest()
+            if output_verification is not None:
+                result["output_verification"] = output_verification
             if destination is not None:
                 result["output_size_bytes"] = destination.stat().st_size if destination.exists() else raw_size
 
@@ -496,6 +674,11 @@ def _process_sparse(
                 temp_path.unlink()
             temp_path = None
             result["output_size_bytes"] = destination.stat().st_size
+            if show_progress and verify_output:
+                print(
+                    f"\rProgress: 100% | {_format_size(raw_size)} / {_format_size(raw_size)}",
+                    file=sys.stderr,
+                )
             notify("success", f"Результат сохранён: {destination}")
         elif destination is None:
             notify("success", "Проверка образа завершена успешно; выходной файл не создавался.")
@@ -527,6 +710,7 @@ def convert_sparse_to_raw(
     force: bool = False,
     show_progress: bool = False,
     calculate_sha256: bool = False,
+    verify_output: bool = False,
     progress_callback: ProgressCallback | None = None,
     event_callback: EventCallback | None = None,
     cancel_requested: CancelCallback | None = None,
@@ -542,6 +726,7 @@ def convert_sparse_to_raw(
         force=force,
         show_progress=show_progress,
         calculate_sha256=calculate_sha256,
+        verify_output=verify_output,
         mode="convert",
         progress_callback=progress_callback,
         event_callback=event_callback,
@@ -967,6 +1152,7 @@ def merge_sparse_to_raw(
     force: bool = False,
     show_progress: bool = False,
     calculate_sha256: bool = False,
+    verify_output: bool = False,
     progress_callback: ProgressCallback | None = None,
     event_callback: EventCallback | None = None,
     cancel_requested: CancelCallback | None = None,
@@ -1004,13 +1190,12 @@ def merge_sparse_to_raw(
     declared_sizes = [_read_declared_raw_size(source) for source in sources]
     expected_size = sum(declared_sizes)
     started = time.monotonic()
-    # A merge performs two real I/O passes: decoding each sparse part to a
-    # temporary RAW file, then concatenating those RAW files into the staged
-    # final output. Progress therefore uses 2 * expected_size work bytes.
+    # A merge performs two real I/O passes; optional output verification adds
+    # a third bounded read of the completed staging file.
     processed = 0
     converted_bytes = 0
     copied_bytes = 0
-    work_total = max(1, expected_size * 2)
+    work_total = max(1, expected_size * (3 if verify_output else 2))
     last_percent = -1
     last_update = started
     last_callback_percent = -1
@@ -1023,7 +1208,8 @@ def merge_sparse_to_raw(
     total_chunks = 0
     total_input_bytes = 0
     running_crc = 0
-    sha256 = hashlib.sha256() if calculate_sha256 else None
+    sha256 = hashlib.sha256() if (calculate_sha256 or verify_output) else None
+    verification_in_progress = False
 
     def notify(level: str, message: str) -> None:
         if event_callback is not None:
@@ -1054,7 +1240,7 @@ def merge_sparse_to_raw(
             "percent": percent,
             "speed_bytes_per_second": done / elapsed,
             "elapsed_seconds": elapsed,
-            "stage": "merge",
+            "stage": "verification" if verification_in_progress else "merge",
         })
         last_callback_percent = percent
         last_callback_time = now
@@ -1164,6 +1350,33 @@ def merge_sparse_to_raw(
             raise OSError(
                 f"Merged size mismatch: expected {expected_size} bytes, wrote {stage_path.stat().st_size}"
             )
+
+        output_verification: dict[str, Any] | None = None
+        if verify_output:
+            if sha256 is None:
+                raise OutputVerificationError("Expected logical SHA-256 is unavailable for merge verification")
+            verification_in_progress = True
+            expected_digest = sha256.hexdigest()
+            notify("info", "Verifying the completed merged RAW staging file before commit.")
+
+            def merge_verification_progress(data: dict[str, Any]) -> None:
+                nonlocal processed
+                processed = expected_size * 2 + int(data["verified_bytes"])
+                emit_progress(force_update=True)
+
+            output_verification = _verify_raw_file(
+                stage_path,
+                expected_size,
+                expected_digest,
+                progress_callback=merge_verification_progress,
+                event_callback=event_callback,
+                cancel_requested=cancel_requested,
+                show_progress=show_progress,
+            )
+            if show_progress:
+                print(file=sys.stderr)
+            verification_in_progress = False
+
         check_cancelled()
         if force:
             os.replace(stage_path, destination)
@@ -1215,8 +1428,10 @@ def merge_sparse_to_raw(
             "chunks": total_chunks,
             "preflight": preflight_report,
         }
-        if sha256 is not None:
+        if calculate_sha256 and sha256 is not None:
             result["sha256"] = sha256.hexdigest()
+        if output_verification is not None:
+            result["output_verification"] = output_verification
         return result
     finally:
         if stage_fd is not None:
@@ -1251,6 +1466,10 @@ def print_summary(result: dict[str, Any], *, verbose: bool) -> None:
     print(f"Computed CRC32   : {result['computed_crc32']}")
     if "sha256" in result:
         print(f"RAW SHA-256      : {result['sha256']}")
+    verification = result.get("output_verification")
+    if verification and verification.get("passed"):
+        print(f"RAW verification : PASSED ({_format_size(verification['verified_bytes'])} re-read)")
+        print(f"Verified SHA-256 : {verification['actual_sha256']}")
     if result.get("output"):
         print(f"Output           : {result['output']}")
     preflight = result.get("preflight")
@@ -1283,6 +1502,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
     modes.add_argument("--verify-only", action="store_true", help="проверить структуру и контрольные суммы без создания RAW-файла")
     parser.add_argument("--force", action="store_true", help="разрешить перезапись существующего выходного файла или отчёта")
     parser.add_argument("--sha256", action="store_true", help="вычислить SHA-256 логического RAW-содержимого")
+    parser.add_argument("--verify-output", action="store_true", help="повторно прочитать готовый RAW и сверить размер и SHA-256 перед сохранением")
     parser.add_argument("--json-report", metavar="FILE", help="сохранить результаты в JSON-файл")
     parser.add_argument("--quiet", action="store_true", help="не показывать индикатор прогресса")
     return parser
@@ -1313,6 +1533,8 @@ def main(argv: list[str] | None = None) -> int:
 
     output_arg = args.merge_output if merging else args.output_raw
     input_args = args.merge_parts if merging else [args.input_sparse]
+    if args.verify_output and mode != "convert":
+        parser.error("--verify-output можно использовать только при конвертации или --merge-parts")
     report_path: Path | None = None
     if args.json_report:
         report_path = Path(args.json_report).expanduser().resolve()
@@ -1338,6 +1560,7 @@ def main(argv: list[str] | None = None) -> int:
                 force=args.force,
                 show_progress=not args.quiet,
                 calculate_sha256=args.sha256,
+                verify_output=args.verify_output,
             )
         elif mode == "convert":
             result = convert_sparse_to_raw(
@@ -1346,6 +1569,7 @@ def main(argv: list[str] | None = None) -> int:
                 force=args.force,
                 show_progress=not args.quiet,
                 calculate_sha256=args.sha256,
+                verify_output=args.verify_output,
             )
         else:
             result = inspect_sparse(

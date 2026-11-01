@@ -26,6 +26,7 @@ from sparse_to_raw import (
     preflight_batch,
     preflight_output,
     InsufficientDiskSpaceError,
+    OutputVerificationError,
     main,
 )
 
@@ -181,6 +182,141 @@ class SparseToRawTests(unittest.TestCase):
         result = inspect_sparse(self.input_path, calculate_sha256=True)
         self.assertEqual(result["sha256"], hashlib.sha256(raw_data).hexdigest())
 
+
+    def test_conversion_verifies_staged_raw_before_commit(self) -> None:
+        raw_data = b"DATA" + b"\x00" * 4
+        self.input_path.write_bytes(
+            make_sparse([chunk(CHUNK_RAW, 1, b"DATA"), chunk(CHUNK_DONT_CARE, 1)], raw_data)
+        )
+        progress: list[dict] = []
+        result = convert_sparse_to_raw(
+            self.input_path, self.output_path, verify_output=True,
+            progress_callback=progress.append,
+        )
+        verification = result["output_verification"]
+        expected = hashlib.sha256(raw_data).hexdigest()
+        self.assertTrue(verification["passed"])
+        self.assertEqual(verification["expected_size_bytes"], len(raw_data))
+        self.assertEqual(verification["actual_size_bytes"], len(raw_data))
+        self.assertEqual(verification["expected_sha256"], expected)
+        self.assertEqual(verification["actual_sha256"], expected)
+        self.assertEqual(self.output_path.read_bytes(), raw_data)
+        self.assertTrue(any(item.get("stage") == "verification" for item in progress))
+        self.assertEqual([item["percent"] for item in progress], sorted(item["percent"] for item in progress))
+        self.assertNotIn("sha256", result, "verification should not silently enable the optional --sha256 result field")
+
+    def test_output_verification_failure_preserves_existing_destination(self) -> None:
+        raw_data = b"DATA"
+        self.input_path.write_bytes(make_sparse([chunk(CHUNK_RAW, 1, raw_data)], raw_data))
+        self.output_path.write_bytes(b"KEEP")
+        from sparse_to_raw import _verify_raw_file as real_verify
+
+        def corrupt_then_verify(path, *args, **kwargs):
+            Path(path).write_bytes(b"EVIL")
+            return real_verify(path, *args, **kwargs)
+
+        with patch("sparse_to_raw._verify_raw_file", side_effect=corrupt_then_verify):
+            with self.assertRaisesRegex(OutputVerificationError, "SHA-256 mismatch"):
+                convert_sparse_to_raw(self.input_path, self.output_path, force=True, verify_output=True)
+        self.assertEqual(self.output_path.read_bytes(), b"KEEP")
+        self.assertEqual(list(self.root.glob(".sample.raw.*.tmp")), [])
+
+    def test_output_verification_rejects_truncated_staging_file(self) -> None:
+        raw_data = b"DATA"
+        self.input_path.write_bytes(make_sparse([chunk(CHUNK_RAW, 1, raw_data)], raw_data))
+        self.output_path.write_bytes(b"KEEP")
+        from sparse_to_raw import _verify_raw_file as real_verify
+
+        def truncate_then_verify(path, *args, **kwargs):
+            Path(path).write_bytes(b"DAT")
+            return real_verify(path, *args, **kwargs)
+
+        with patch("sparse_to_raw._verify_raw_file", side_effect=truncate_then_verify):
+            with self.assertRaisesRegex(OutputVerificationError, "size mismatch"):
+                convert_sparse_to_raw(self.input_path, self.output_path, force=True, verify_output=True)
+        self.assertEqual(self.output_path.read_bytes(), b"KEEP")
+        self.assertEqual(list(self.root.glob(".sample.raw.*.tmp")), [])
+
+    def test_merge_verification_failure_preserves_existing_destination(self) -> None:
+        first = self.root / "part0.sparse"
+        second = self.root / "part1.sparse"
+        first.write_bytes(make_sparse([chunk(CHUNK_RAW, 1, b"AAAA")], b"AAAA"))
+        second.write_bytes(make_sparse([chunk(CHUNK_RAW, 1, b"BBBB")], b"BBBB"))
+        self.output_path.write_bytes(b"KEEP")
+        from sparse_to_raw import _verify_raw_file as real_verify
+
+        def corrupt_then_verify(path, *args, **kwargs):
+            Path(path).write_bytes(b"EVILEVIL")
+            return real_verify(path, *args, **kwargs)
+
+        with patch("sparse_to_raw._verify_raw_file", side_effect=corrupt_then_verify):
+            with self.assertRaises(OutputVerificationError):
+                merge_sparse_to_raw([first, second], self.output_path, force=True, verify_output=True)
+        self.assertEqual(self.output_path.read_bytes(), b"KEEP")
+        self.assertEqual(list(self.root.glob(".sample.raw.*.tmp")), [])
+
+    def test_output_verification_cancellation_preserves_destination(self) -> None:
+        raw_data = b"DATA"
+        self.input_path.write_bytes(make_sparse([chunk(CHUNK_RAW, 1, raw_data)], raw_data))
+        self.output_path.write_bytes(b"KEEP")
+        verify_started = {"value": False}
+
+        def on_event(_level: str, message: str) -> None:
+            if "Re-reading staged RAW output" in message:
+                verify_started["value"] = True
+
+        with self.assertRaises(ConversionCancelled):
+            convert_sparse_to_raw(
+                self.input_path, self.output_path, force=True, verify_output=True,
+                event_callback=on_event,
+                cancel_requested=lambda: verify_started["value"],
+            )
+        self.assertEqual(self.output_path.read_bytes(), b"KEEP")
+        self.assertEqual(list(self.root.glob(".sample.raw.*.tmp")), [])
+
+    def test_merge_verifies_final_combined_raw_output(self) -> None:
+        first = self.root / "part0.sparse"
+        second = self.root / "part1.sparse"
+        first.write_bytes(make_sparse([chunk(CHUNK_RAW, 1, b"AAAA")], b"AAAA"))
+        second.write_bytes(make_sparse([chunk(CHUNK_RAW, 1, b"BBBB")], b"BBBB"))
+        progress: list[dict] = []
+        result = merge_sparse_to_raw(
+            [first, second], self.output_path, verify_output=True,
+            progress_callback=progress.append,
+        )
+        expected = hashlib.sha256(b"AAAABBBB").hexdigest()
+        self.assertEqual(self.output_path.read_bytes(), b"AAAABBBB")
+        self.assertTrue(result["output_verification"]["passed"])
+        self.assertEqual(result["output_verification"]["actual_sha256"], expected)
+        self.assertTrue(any(item.get("stage") == "verification" for item in progress))
+        percentages = [item["percent"] for item in progress]
+        self.assertEqual(percentages, sorted(percentages))
+
+    def test_cli_verify_output_is_in_json_report(self) -> None:
+        raw_data = b"DATA"
+        self.input_path.write_bytes(make_sparse([chunk(CHUNK_RAW, 1, raw_data)], raw_data))
+        report = self.root / "verify-report.json"
+        stdout = StringIO()
+        stderr = StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            code = main([
+                str(self.input_path), str(self.output_path), "--verify-output",
+                "--json-report", str(report), "--quiet",
+            ])
+        self.assertEqual(code, 0, stderr.getvalue())
+        payload = json.loads(report.read_text(encoding="utf-8"))
+        self.assertTrue(payload["output_verification"]["passed"])
+        self.assertIn("RAW verification : PASSED", stdout.getvalue())
+
+    def test_cli_rejects_verify_output_for_inspection(self) -> None:
+        raw_data = b"DATA"
+        self.input_path.write_bytes(make_sparse([chunk(CHUNK_RAW, 1, raw_data)], raw_data))
+        stderr = StringIO()
+        with redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as raised:
+                main([str(self.input_path), "--info", "--verify-output"])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("можно использовать только", stderr.getvalue())
 
     def _write_discoverable_part(
         self,
