@@ -11,4 +11,6 @@ Common pages:
 - [Security policy / Политика безопасности](SECURITY.md)
 - [RAW output verification (EN)](en/output-verification.md)
 - [Проверка выходного RAW (RU)](ru/output-verification.md)
+- [Advanced task queue (EN)](en/task-queue.md)
+- [Расширенная очередь заданий (RU)](ru/task-queue.md)
 - [Screenshots / Скриншоты](screenshots/)

@@ -29,7 +29,9 @@ Use the language selector to switch between Russian and English. The speed selec
 
 ## Task queue
 
-**Task queue** lets you add multiple input images and process them sequentially into a selected output folder. The queue writes a JSON summary. If one item fails, the remaining items can continue. The application rejects items that would generate duplicate output filenames.
+**Task queue** lets you add multiple input images and process them sequentially into a selected output folder. Drag items to reorder them before starting; the up/down controls are also available. While running, select one or more waiting/running items to cancel or skip them individually. A running task is cancelled at the converter's next safe cancellation point; a pending task is marked immediately. Pause takes effect between files, so the active file is not suspended mid-write. Failed, cancelled, and skipped items can be selected and retried after the run. Use the status filter to focus on waiting, running, successful, failed, cancelled, or skipped items. The progress bar reports overall queue progress and the JSON summary includes per-item states. A failed item does not stop the remaining queue.
+
+For detailed queue controls, pause/cancel behavior, retries, and status filters, see [Advanced task queue](task-queue.md).
 
 ## Merge Sparse
 

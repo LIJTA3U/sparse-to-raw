@@ -99,6 +99,7 @@ For all CLI options, examples, and exit behavior, see the [CLI guide](docs/en/cl
 - [CLI guide](docs/en/cli-guide.md)
 - [RAW output verification](docs/en/output-verification.md)
 - [GUI guide](docs/en/gui-guide.md)
+- [Task queue guide](docs/en/task-queue.md)
 - [Development and packaging](docs/en/development.md)
 - [Changelog](docs/en/changelog.md)
 - [Contributing](docs/CONTRIBUTING.md)

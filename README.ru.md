@@ -99,6 +99,7 @@ py sparse_to_raw.py --merge-parts super.img_sparsechunk.0 super.img_sparsechunk.
 - [Руководство CLI](docs/ru/cli-guide.md)
 - [Проверка выходного RAW](docs/ru/output-verification.md)
 - [Руководство GUI](docs/ru/gui-guide.md)
+- [Руководство по очереди заданий](docs/ru/task-queue.md)
 - [Разработка и сборка](docs/ru/development.md)
 - [История изменений](docs/ru/changelog.md)
 - [Участие в разработке](docs/CONTRIBUTING.md)

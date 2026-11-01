@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import traceback
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -83,7 +84,25 @@ I18N: dict[str, dict[str, str]] = {
         "output_folder": "Папка назначения", "choose_folder": "Выбрать…", "run_queue": "Запустить очередь",
         "start_analysis": "Проверить образ", "start_merge": "Объединить части", "source_file": "Входной файл",
         "save_json": "Сохранить JSON…", "overwrite": "Разрешить перезапись существующих файлов",
-        "queue_hint": "Файлы будут обрабатываться последовательно. Ошибка одного файла не остановит остальные.",
+        "queue_hint": "Файлы обрабатываются последовательно. Можно менять порядок перетаскиванием, приостанавливать очередь между файлами, отменять отдельные задания и повторять ошибки.",
+        "queue_filter": "Фильтр статуса", "filter_all": "Все задания", "filter_waiting": "Ожидают",
+        "filter_running": "Выполняются", "filter_success": "Успешные", "filter_failed": "Ошибки",
+        "filter_cancelled": "Отменённые", "filter_skipped": "Пропущенные",
+        "queue_add": "Добавить файлы…", "queue_remove": "Удалить выбранные", "queue_clear": "Очистить очередь",
+        "queue_move_up": "Вверх", "queue_move_down": "Вниз", "queue_retry": "Повторить выбранные",
+        "queue_skip": "Пропустить выбранные", "queue_cancel_selected": "Отменить выбранные",
+        "queue_pause": "Пауза", "queue_resume": "Продолжить", "queue_pausing": "Пауза после текущего файла…",
+        "queue_cancel_all": "Отменить очередь", "queue_status_waiting": "ОЖИДАНИЕ", "queue_status_running": "ВЫПОЛНЯЕТСЯ",
+        "queue_status_success": "УСПЕШНО", "queue_status_failed": "ОШИБКА", "queue_status_cancelled": "ОТМЕНЕНО",
+        "queue_status_skipped": "ПРОПУЩЕНО", "queue_status_cancel_requested": "ОТМЕНА ЗАПРОШЕНА",
+        "queue_status_skip_requested": "ПРОПУСК ЗАПРОШЕН",
+        "queue_summary": "Всего: {total} · Ожидают: {waiting} · Выполняются: {running} · Выполнено: {success} · Ошибки: {failed} · Отменено: {cancelled} · Пропущено: {skipped}",
+        "queue_retry_hint": "Повторно запускаются только выбранные задания со статусом «Ошибка», «Отменено» или «Пропущено».",
+        "queue_no_retry": "Выберите задания со статусом «Ошибка», «Отменено» или «Пропущено».",
+        "queue_pause_hint": "Пауза применяется между файлами. Текущая конвертация будет завершена или отменена отдельно.",
+        "queue_item_cancel_requested": "Запрошена отмена задания: {path}",
+        "queue_item_skip_requested": "Запрошен пропуск задания: {path}",
+        "queue_paused_log": "Очередь приостановлена между заданиями.", "queue_resumed_log": "Очередь продолжена.",
         "merge_hint": "Добавьте независимые Sparse-файлы вручную или найдите набор в папке. Каждый файл должен иметь собственный заголовок.",
         "analysis_ready": "Выберите файл и нажмите «Проверить образ».", "result": "Результат",
         "file": "Файл", "state": "Состояние", "raw_size": "RAW-размер", "chunks_count": "Чанков",
@@ -130,7 +149,25 @@ I18N: dict[str, dict[str, str]] = {
         "output_folder": "Output folder", "choose_folder": "Choose…", "run_queue": "Run queue",
         "start_analysis": "Verify image", "start_merge": "Merge parts", "source_file": "Input file",
         "save_json": "Save JSON…", "overwrite": "Allow overwriting existing files",
-        "queue_hint": "Files are processed sequentially. A failed file will not stop the remaining queue.",
+        "queue_hint": "Files are processed sequentially. Reorder by dragging, pause between files, cancel individual tasks, and retry failures.",
+        "queue_filter": "Status filter", "filter_all": "All tasks", "filter_waiting": "Waiting",
+        "filter_running": "Running", "filter_success": "Successful", "filter_failed": "Failed",
+        "filter_cancelled": "Cancelled", "filter_skipped": "Skipped",
+        "queue_add": "Add files…", "queue_remove": "Remove selected", "queue_clear": "Clear queue",
+        "queue_move_up": "Move up", "queue_move_down": "Move down", "queue_retry": "Retry selected",
+        "queue_skip": "Skip selected", "queue_cancel_selected": "Cancel selected",
+        "queue_pause": "Pause", "queue_resume": "Resume", "queue_pausing": "Pausing after current file…",
+        "queue_cancel_all": "Cancel queue", "queue_status_waiting": "WAITING", "queue_status_running": "RUNNING",
+        "queue_status_success": "SUCCESS", "queue_status_failed": "FAILED", "queue_status_cancelled": "CANCELLED",
+        "queue_status_skipped": "SKIPPED", "queue_status_cancel_requested": "CANCEL REQUESTED",
+        "queue_status_skip_requested": "SKIP REQUESTED",
+        "queue_summary": "Total: {total} · Waiting: {waiting} · Running: {running} · Done: {success} · Failed: {failed} · Cancelled: {cancelled} · Skipped: {skipped}",
+        "queue_retry_hint": "Only selected tasks with Failed, Cancelled, or Skipped status will be retried.",
+        "queue_no_retry": "Select tasks with Failed, Cancelled, or Skipped status.",
+        "queue_pause_hint": "Pause takes effect between files. The current conversion will finish unless cancelled separately.",
+        "queue_item_cancel_requested": "Cancellation requested for: {path}",
+        "queue_item_skip_requested": "Skip requested for: {path}",
+        "queue_paused_log": "Queue paused between tasks.", "queue_resumed_log": "Queue resumed.",
         "merge_hint": "Add standalone Sparse files manually or find a set in a folder. Each file must have its own header.",
         "analysis_ready": "Choose a file and click “Verify image”.", "result": "Result",
         "file": "File", "state": "State", "raw_size": "RAW size", "chunks_count": "Chunks",
@@ -403,11 +440,113 @@ class ConversionWorkerObject(QObject):
 
 
 class BatchWorkerObject(QObject):
-    progress = Signal(dict); log = Signal(str, str); item_finished = Signal(int, dict); finished_report = Signal(dict); finished = Signal()
+    """Sequential batch worker with per-task control and boundary-based pause."""
+    progress = Signal(dict)
+    log = Signal(str, str)
+    item_started = Signal(str)
+    item_finished = Signal(int, dict)
+    pause_changed = Signal(bool)
+    finished_report = Signal(dict)
+    finished = Signal()
+
     def __init__(self, sources: list[Path], output_dir: Path, overwrite: bool,
-                 verify_output: bool = False) -> None:
-        super().__init__(); self.sources = sources; self.output_dir = output_dir; self.overwrite = overwrite
-        self.verify_output = bool(verify_output); self._cancel_event = threading.Event()
+                 verify_output: bool = False, task_ids: list[str] | None = None) -> None:
+        super().__init__()
+        self.sources = list(sources)
+        self.output_dir = output_dir
+        self.overwrite = overwrite
+        self.verify_output = bool(verify_output)
+        self.task_ids = list(task_ids) if task_ids is not None else [str(i) for i in range(len(self.sources))]
+        if len(self.task_ids) != len(self.sources):
+            raise ValueError("task_ids must contain exactly one ID per source")
+
+        self._cancel_event = threading.Event()
+        self._control = threading.Condition()
+        self._pause_requested = False
+        self._is_paused = False
+        self._cancelled_task_ids: set[str] = set()
+        self._skipped_task_ids: set[str] = set()
+        self._finished_task_ids: set[str] = set()
+        self._current_task_id: str | None = None
+        self._current_task_cancel: threading.Event | None = None
+
+    def request_pause(self) -> None:
+        """Pause after the current file reaches a safe completion boundary."""
+        with self._control:
+            if not self._cancel_event.is_set():
+                self._pause_requested = True
+                self._control.notify_all()
+
+    def resume(self) -> None:
+        with self._control:
+            self._pause_requested = False
+            self._control.notify_all()
+
+    def is_pause_requested(self) -> bool:
+        with self._control:
+            return self._pause_requested
+
+    def is_paused(self) -> bool:
+        with self._control:
+            return self._is_paused
+
+    def cancel_task(self, task_id: str) -> bool:
+        """Cancel one pending or active task without stopping the whole queue."""
+        with self._control:
+            if task_id in self._finished_task_ids:
+                return False
+            self._cancelled_task_ids.add(task_id)
+            if task_id == self._current_task_id and self._current_task_cancel is not None:
+                self._current_task_cancel.set()
+            self._control.notify_all()
+            return True
+
+    def skip_task(self, task_id: str) -> bool:
+        """Skip one pending task, or safely cancel the active task as skipped."""
+        with self._control:
+            if task_id in self._finished_task_ids:
+                return False
+            self._skipped_task_ids.add(task_id)
+            self._cancelled_task_ids.discard(task_id)
+            if task_id == self._current_task_id and self._current_task_cancel is not None:
+                self._current_task_cancel.set()
+            self._control.notify_all()
+            return True
+
+    def request_cancel(self) -> None:
+        """Cancel the active task and all remaining tasks."""
+        self._cancel_event.set()
+        with self._control:
+            self._pause_requested = False
+            self._control.notify_all()
+            if self._current_task_cancel is not None:
+                self._current_task_cancel.set()
+
+    def _wait_at_task_boundary(self) -> bool:
+        """Wait for resume before starting a new task; return false on queue cancel."""
+        with self._control:
+            if self._pause_requested and not self._cancel_event.is_set():
+                if not self._is_paused:
+                    self._is_paused = True
+                    self.pause_changed.emit(True)
+                while self._pause_requested and not self._cancel_event.is_set():
+                    self._control.wait(timeout=0.25)
+                if self._is_paused:
+                    self._is_paused = False
+                    self.pause_changed.emit(False)
+            return not self._cancel_event.is_set()
+
+    def _emit_item_finished(self, index: int, source: Path, row: dict[str, Any], rows: list[dict[str, Any]]) -> None:
+        task_id = self.task_ids[index]
+        row.setdefault("task_id", task_id)
+        rows.append(row)
+        with self._control:
+            self._finished_task_ids.add(task_id)
+            if self._current_task_id == task_id:
+                self._current_task_id = None
+                self._current_task_cancel = None
+        self.item_finished.emit(index, row)
+
     @Slot()
     def run(self) -> None:
         started = datetime.now()
@@ -440,19 +579,39 @@ class BatchWorkerObject(QObject):
                 )
                 self.log.emit("error", message)
                 for index, source in enumerate(self.sources):
-                    row = {"input": str(source), "status": "failed", "error": message}
-                    rows.append(row)
-                    self.item_finished.emit(index, row)
+                    row = {"input": str(source), "status": "failed", "error": message, "task_id": self.task_ids[index]}
+                    self._emit_item_finished(index, source, row, rows)
 
             if preflight_report is not None:
                 for index, source in enumerate(self.sources):
-                    if self._cancel_event.is_set():
-                        rows.append({"input": str(source), "status": "cancelled", "error": "Cancelled before start"})
-                        self.item_finished.emit(index, rows[-1])
+                    task_id = self.task_ids[index]
+                    if not self._wait_at_task_boundary():
+                        row = {"input": str(source), "status": "cancelled", "error": "Queue cancelled before start", "task_id": task_id}
+                        self._emit_item_finished(index, source, row, rows)
                         continue
+
+                    with self._control:
+                        skip_before_start = task_id in self._skipped_task_ids
+                        cancel_before_start = task_id in self._cancelled_task_ids
+                    if skip_before_start:
+                        row = {"input": str(source), "status": "skipped", "error": "Skipped before start", "task_id": task_id}
+                        self.log.emit("warning", f"[{index+1}/{total}] Skipped: {source}")
+                        self._emit_item_finished(index, source, row, rows)
+                        continue
+                    if cancel_before_start:
+                        row = {"input": str(source), "status": "cancelled", "error": "Cancelled before start", "task_id": task_id}
+                        self.log.emit("warning", f"[{index+1}/{total}] Cancelled before start: {source}")
+                        self._emit_item_finished(index, source, row, rows)
+                        continue
+
                     destination = self.output_dir / f"{source.stem}_raw.img"
                     self.log.emit("info", f"[{index+1}/{total}] {source}")
-                    row: dict[str, Any] = {"input": str(source), "output": str(destination), "status": "failed"}
+                    row: dict[str, Any] = {"input": str(source), "output": str(destination), "status": "failed", "task_id": task_id}
+                    task_cancel = threading.Event()
+                    with self._control:
+                        self._current_task_id = task_id
+                        self._current_task_cancel = task_cancel
+                    self.item_started.emit(task_id)
                     try:
                         if index in collision_indices:
                             raise ValueError(
@@ -464,7 +623,7 @@ class BatchWorkerObject(QObject):
                                 f"Output exists; skipped to prevent overwrite: {destination}"
                             )
 
-                        def per_file_progress(data: dict[str, Any], *, _idx=index) -> None:
+                        def per_file_progress(data: dict[str, Any], *, _idx=index, _task_id=task_id) -> None:
                             current = int(data.get("percent", 0))
                             self.progress.emit({
                                 **data,
@@ -472,29 +631,45 @@ class BatchWorkerObject(QObject):
                                 "queue_total": total,
                                 "queue_percent": int((_idx + current / 100) * 100 / max(total, 1)),
                                 "queue_current_file": str(source),
+                                "queue_task_id": _task_id,
                             })
+
+                        def cancel_requested() -> bool:
+                            return self._cancel_event.is_set() or task_cancel.is_set()
 
                         result = convert_sparse_to_raw(
                             source, destination, force=self.overwrite, calculate_sha256=True,
                             verify_output=self.verify_output,
                             progress_callback=per_file_progress, event_callback=self.log.emit,
-                            cancel_requested=self._cancel_event.is_set,
+                            cancel_requested=cancel_requested,
                         )
                         row.update({"status": "success", "result": result})
                         self.log.emit("success", f"[{index+1}/{total}] Completed: {destination}")
                     except ConversionCancelled:
-                        row.update({"status": "cancelled", "error": "Cancelled by user"})
-                        self.log.emit("warning", f"[{index+1}/{total}] Cancelled: {source}")
+                        with self._control:
+                            skipped = task_id in self._skipped_task_ids
+                        if skipped:
+                            row.update({"status": "skipped", "error": "Skipped during processing"})
+                            self.log.emit("warning", f"[{index+1}/{total}] Skipped: {source}")
+                        else:
+                            row.update({"status": "cancelled", "error": "Cancelled by user"})
+                            self.log.emit("warning", f"[{index+1}/{total}] Cancelled: {source}")
                     except Exception as exc:
                         row.update({"status": "failed", "error": f"{type(exc).__name__}: {exc}"})
                         self.log.emit("error", f"[{index+1}/{total}] Failed: {source}\n{type(exc).__name__}: {exc}")
-                    rows.append(row)
-                    self.item_finished.emit(index, row)
+                    self._emit_item_finished(index, source, row, rows)
+
                     if self._cancel_event.is_set():
-                        for later in self.sources[index+1:]:
-                            row2 = {"input": str(later), "status": "cancelled", "error": "Cancelled before start"}
-                            rows.append(row2)
-                            self.item_finished.emit(len(rows)-1, row2)
+                        for later_index in range(index + 1, total):
+                            later = self.sources[later_index]
+                            task_id = self.task_ids[later_index]
+                            with self._control:
+                                skipped = task_id in self._skipped_task_ids
+                                cancelled = task_id in self._cancelled_task_ids
+                            status = "skipped" if skipped else "cancelled"
+                            error = "Skipped before start" if skipped else "Cancelled before start"
+                            row2 = {"input": str(later), "status": status, "error": error, "task_id": task_id}
+                            self._emit_item_finished(later_index, later, row2, rows)
                         break
 
             report = {
@@ -509,6 +684,7 @@ class BatchWorkerObject(QObject):
                     "success": sum(row["status"] == "success" for row in rows),
                     "failed": sum(row["status"] == "failed" for row in rows),
                     "cancelled": sum(row["status"] == "cancelled" for row in rows),
+                    "skipped": sum(row["status"] == "skipped" for row in rows),
                 },
                 "items": rows,
             }
@@ -522,7 +698,6 @@ class BatchWorkerObject(QObject):
             self.finished_report.emit(report)
         finally:
             self.finished.emit()
-    def request_cancel(self) -> None: self._cancel_event.set()
 
 
 def connect_worker(worker: ConversionWorkerObject, parent: QWidget, finished_callback) -> QThread:
@@ -591,57 +766,348 @@ class AnalysisDialog(QDialog):
 
 
 class BatchQueueDialog(QDialog):
+    """Interactive sequential queue with task-level control and status filtering."""
+    ROLE_SOURCE = int(Qt.ItemDataRole.UserRole)
+    ROLE_TASK_ID = ROLE_SOURCE + 1
+    ROLE_STATUS = ROLE_SOURCE + 2
+    ROLE_ERROR = ROLE_SOURCE + 3
+    ROLE_REQUEST_ORIGINAL_STATUS = ROLE_SOURCE + 4
+
+    STATUS_COLORS = {
+        "waiting": COLORS["muted"], "running": COLORS["cyan"],
+        "success": COLORS["green"], "failed": COLORS["red"],
+        "cancelled": COLORS["amber"], "skipped": COLORS["muted"],
+    }
+
     def __init__(self, parent: "MainWindow") -> None:
-        super().__init__(parent); self.main = parent; self.thread: QThread | None = None; self.worker: BatchWorkerObject | None = None; self._close_when_finished = False
-        self.setWindowTitle(parent.t("queue_title")); self.resize(900, 620); self.setModal(False)
+        super().__init__(parent)
+        self.main = parent
+        self.thread: QThread | None = None
+        self.worker: BatchWorkerObject | None = None
+        self._close_when_finished = False
+        self._run_task_ids: list[str] = []
+        self._run_finished_count = 0
+        self._pause_active = False
+        self._last_progress_label = parent.t("ready")
+        self._running = False
+
+        self.setWindowTitle(parent.t("queue_title"))
+        self.resize(980, 720)
+        self.setModal(False)
         root = QVBoxLayout(self)
-        hint = QLabel(parent.t("queue_hint")); hint.setWordWrap(True); hint.setStyleSheet(f"color:{COLORS['muted']};"); root.addWidget(hint)
-        self.list = QListWidget(); self.list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection); root.addWidget(self.list, 1)
-        row = QHBoxLayout(); self.queue_mutation_buttons = []
-        for text, icon, callback in [(parent.t("add_files"), "SP_DialogOpenButton", self._add_files), (parent.t("remove"), "SP_TrashIcon", self._remove), (parent.t("clear"), "SP_DialogResetButton", self.list.clear)]:
-            btn = QPushButton(text); btn.setIcon(parent.icon_for(icon)); btn.setIconSize(QSize(parent.icon_size, parent.icon_size)); btn.clicked.connect(callback); row.addWidget(btn); self.queue_mutation_buttons.append(btn)
+
+        hint = QLabel(parent.t("queue_hint"))
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"color:{COLORS['muted']};")
+        root.addWidget(hint)
+
+        filter_row = QHBoxLayout()
+        filter_row.addWidget(QLabel(parent.t("queue_filter")))
+        self.filter_combo = QComboBox()
+        self.filter_combo.addItem(parent.t("filter_all"), "all")
+        self.filter_combo.addItem(parent.t("filter_waiting"), "waiting")
+        self.filter_combo.addItem(parent.t("filter_running"), "running")
+        self.filter_combo.addItem(parent.t("filter_success"), "success")
+        self.filter_combo.addItem(parent.t("filter_failed"), "failed")
+        self.filter_combo.addItem(parent.t("filter_cancelled"), "cancelled")
+        self.filter_combo.addItem(parent.t("filter_skipped"), "skipped")
+        self.filter_combo.currentIndexChanged.connect(self._apply_filter)
+        filter_row.addWidget(self.filter_combo)
+        filter_row.addStretch()
+        self.summary_label = QLabel()
+        self.summary_label.setStyleSheet(f"color:{COLORS['muted']};")
+        filter_row.addWidget(self.summary_label)
+        root.addLayout(filter_row)
+
+        self.list = QListWidget()
+        self.list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+        self.list.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self.list.setDragDropOverwriteMode(False)
+        self.list.setToolTip(parent.t("queue_hint"))
+        self.list.itemSelectionChanged.connect(self._update_action_states)
+        self.list.model().rowsMoved.connect(self._refresh_summary)
+        root.addWidget(self.list, 1)
+
+        row = QHBoxLayout()
+        self.queue_mutation_buttons: list[QPushButton] = []
+        controls = [
+            (parent.t("queue_add"), "SP_DialogOpenButton", self._add_files),
+            (parent.t("queue_remove"), "SP_TrashIcon", self._remove),
+            (parent.t("queue_clear"), "SP_DialogResetButton", self._clear),
+            (parent.t("queue_move_up"), "SP_ArrowUp", lambda: self._move_selected(-1)),
+            (parent.t("queue_move_down"), "SP_ArrowDown", lambda: self._move_selected(1)),
+        ]
+        for label, icon, callback in controls:
+            button = QPushButton(label)
+            button.setIcon(parent.icon_for(icon))
+            button.setIconSize(QSize(parent.icon_size, parent.icon_size))
+            button.clicked.connect(callback)
+            row.addWidget(button)
+            self.queue_mutation_buttons.append(button)
         root.addLayout(row)
-        folder_row = QHBoxLayout(); self.folder_edit = QLineEdit(str(parent.settings.value("queue_output_dir", str(Path.home() / "sparse-to-raw-output")))); folder_row.addWidget(QLabel(parent.t("output_folder"))); folder_row.addWidget(self.folder_edit,1)
-        browse = QPushButton(parent.t("choose_folder")); browse.setIcon(parent.icon_for("SP_DirOpenIcon")); browse.setIconSize(QSize(parent.icon_size, parent.icon_size)); browse.clicked.connect(self._browse_folder); folder_row.addWidget(browse); root.addLayout(folder_row)
-        self.overwrite = QCheckBox(parent.t("overwrite")); root.addWidget(self.overwrite)
+
+        task_controls = QHBoxLayout()
+        self.cancel_selected_button = QPushButton(parent.t("queue_cancel_selected"))
+        self.skip_selected_button = QPushButton(parent.t("queue_skip"))
+        self.retry_selected_button = QPushButton(parent.t("queue_retry"))
+        for button in (self.cancel_selected_button, self.skip_selected_button, self.retry_selected_button):
+            task_controls.addWidget(button)
+        self.cancel_selected_button.clicked.connect(self._cancel_selected)
+        self.skip_selected_button.clicked.connect(self._skip_selected)
+        self.retry_selected_button.clicked.connect(self._retry_selected)
+        root.addLayout(task_controls)
+
+        folder_row = QHBoxLayout()
+        self.folder_edit = QLineEdit(str(parent.settings.value("queue_output_dir", str(Path.home() / "sparse-to-raw-output"))))
+        folder_row.addWidget(QLabel(parent.t("output_folder")))
+        folder_row.addWidget(self.folder_edit, 1)
+        browse = QPushButton(parent.t("choose_folder"))
+        browse.setIcon(parent.icon_for("SP_DirOpenIcon"))
+        browse.setIconSize(QSize(parent.icon_size, parent.icon_size))
+        browse.clicked.connect(self._browse_folder)
+        folder_row.addWidget(browse)
+        root.addLayout(folder_row)
+
+        self.overwrite = QCheckBox(parent.t("overwrite"))
+        root.addWidget(self.overwrite)
         self.verify_output = QCheckBox(parent.t("verify_output"))
         self.verify_output.setChecked(bool(parent.settings.value("verify_output", True, type=bool)))
         self.verify_output.setToolTip(parent.t("verify_output_tooltip"))
         self.verify_output.toggled.connect(lambda checked: parent.settings.setValue("verify_output", checked))
         root.addWidget(self.verify_output)
-        self.progress = QProgressBar(); self.progress.setRange(0,100); root.addWidget(self.progress)
-        self.log_view = QTextEdit(); self.log_view.setReadOnly(True); self.log_view.setMaximumHeight(135); self.log_view.document().setMaximumBlockCount(1000); root.addWidget(self.log_view)
-        buttons = QHBoxLayout(); self.run_button = QPushButton(parent.t("run_queue")); self.run_button.setIcon(parent.icon_for("SP_MediaPlay")); self.run_button.setIconSize(QSize(parent.icon_size, parent.icon_size)); buttons.addWidget(self.run_button)
-        self.cancel_button = QPushButton(parent.t("cancel")); self.cancel_button.setIcon(parent.icon_for("SP_MediaStop")); self.cancel_button.setIconSize(QSize(parent.icon_size, parent.icon_size)); self.cancel_button.setEnabled(False); buttons.addWidget(self.cancel_button); buttons.addStretch()
-        close = QPushButton("Close" if parent.language == "en" else "Закрыть"); close.clicked.connect(self.close); buttons.addWidget(close); root.addLayout(buttons)
-        self.run_button.clicked.connect(self._run); self.cancel_button.clicked.connect(self._cancel); self._apply_style()
+
+        self.progress_label = QLabel(parent.t("ready"))
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        root.addWidget(self.progress_label)
+        root.addWidget(self.progress)
+
+        self.log_view = QTextEdit()
+        self.log_view.setReadOnly(True)
+        self.log_view.setMaximumHeight(135)
+        self.log_view.document().setMaximumBlockCount(1000)
+        root.addWidget(self.log_view)
+
+        buttons = QHBoxLayout()
+        self.run_button = QPushButton(parent.t("run_queue"))
+        self.run_button.setIcon(parent.icon_for("SP_MediaPlay"))
+        self.run_button.setIconSize(QSize(parent.icon_size, parent.icon_size))
+        buttons.addWidget(self.run_button)
+        self.pause_button = QPushButton(parent.t("queue_pause"))
+        self.pause_button.setIcon(parent.icon_for("SP_MediaPause"))
+        self.pause_button.setIconSize(QSize(parent.icon_size, parent.icon_size))
+        self.pause_button.setEnabled(False)
+        buttons.addWidget(self.pause_button)
+        self.cancel_button = QPushButton(parent.t("queue_cancel_all"))
+        self.cancel_button.setIcon(parent.icon_for("SP_MediaStop"))
+        self.cancel_button.setIconSize(QSize(parent.icon_size, parent.icon_size))
+        self.cancel_button.setEnabled(False)
+        buttons.addWidget(self.cancel_button)
+        buttons.addStretch()
+        close = QPushButton("Close" if parent.language == "en" else "Закрыть")
+        close.clicked.connect(self.close)
+        buttons.addWidget(close)
+        root.addLayout(buttons)
+
+        self.run_button.clicked.connect(lambda _checked=False: self._run())
+        self.pause_button.clicked.connect(self._toggle_pause)
+        self.cancel_button.clicked.connect(self._cancel)
+        self._apply_style()
+        self._refresh_summary()
+        self._update_action_states()
+
     def _apply_style(self) -> None:
-        self.setStyleSheet(f"QDialog{{background:{COLORS['background']};color:{COLORS['text']}}} QListWidget,QTextEdit,QLineEdit{{background:#07111b;color:{COLORS['text']};border:1px solid #29434f}} QPushButton{{background:#0a1b27;color:{COLORS['cyan']};border:1px solid #24505e;padding:6px;border-radius:4px}} QProgressBar{{background:#111d28;border:1px solid #24414e;height:14px}} QProgressBar::chunk{{background:{COLORS['cyan']}}}")
+        self.setStyleSheet(
+            f"QDialog{{background:{COLORS['background']};color:{COLORS['text']}}} "
+            f"QListWidget,QTextEdit,QLineEdit,QComboBox{{background:#07111b;color:{COLORS['text']};border:1px solid #29434f}} "
+            f"QPushButton{{background:#0a1b27;color:{COLORS['cyan']};border:1px solid #24505e;padding:6px;border-radius:4px}} "
+            f"QProgressBar{{background:#111d28;border:1px solid #24414e;height:14px}} "
+            f"QProgressBar::chunk{{background:{COLORS['cyan']}}}"
+        )
+
+    def _status_label(self, status: str) -> str:
+        keys = {
+            "waiting": "queue_status_waiting", "running": "queue_status_running",
+            "success": "queue_status_success", "failed": "queue_status_failed",
+            "cancelled": "queue_status_cancelled", "skipped": "queue_status_skipped",
+            "cancel_requested": "queue_status_cancel_requested", "skip_requested": "queue_status_skip_requested",
+        }
+        return self.main.t(keys.get(status, "queue_status_waiting"))
+
+    def _find_item(self, task_id: str) -> QListWidgetItem | None:
+        for index in range(self.list.count()):
+            item = self.list.item(index)
+            if item.data(self.ROLE_TASK_ID) == task_id:
+                return item
+        return None
+
+    def _set_item_status(self, task_id: str, status: str, error: str = "") -> None:
+        item = self._find_item(task_id)
+        if item is None:
+            return
+        previous_status = item.data(self.ROLE_STATUS) or "waiting"
+        if status in {"cancel_requested", "skip_requested"}:
+            item.setData(self.ROLE_REQUEST_ORIGINAL_STATUS, previous_status)
+        else:
+            item.setData(self.ROLE_REQUEST_ORIGINAL_STATUS, None)
+        item.setData(self.ROLE_STATUS, status)
+        item.setData(self.ROLE_ERROR, error)
+        source = str(item.data(self.ROLE_SOURCE) or "")
+        item.setText(f"{self._status_label(status)}  ·  {source}")
+        item.setForeground(QColor(self.STATUS_COLORS.get(status, COLORS["muted"])))
+        item.setToolTip(error or source)
+        self._refresh_summary()
+        self._apply_filter()
+
+    def _new_item(self, path: str) -> None:
+        if self.filter_combo.currentData() != "all":
+            self.filter_combo.setCurrentIndex(self.filter_combo.findData("all"))
+        resolved = str(Path(path).expanduser().resolve())
+        known = {
+            str(Path(self.list.item(i).data(self.ROLE_SOURCE)).expanduser().resolve()).casefold()
+            for i in range(self.list.count())
+        }
+        if resolved.casefold() in known:
+            return
+        task_id = uuid.uuid4().hex
+        item = QListWidgetItem()
+        item.setData(self.ROLE_SOURCE, resolved)
+        item.setData(self.ROLE_TASK_ID, task_id)
+        item.setData(self.ROLE_STATUS, "waiting")
+        self.list.addItem(item)
+        self._set_item_status(task_id, "waiting")
+        self.main.add_recent(resolved)
+        if self.list.count() == 1:
+            self.folder_edit.setText(str(Path(resolved).parent / "sparse-to-raw-output"))
+
     def _add_files(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(self, self.main.t("add_files"), str(Path.home()), "Images (*)")
-        known = {self.list.item(i).data(Qt.ItemDataRole.UserRole) for i in range(self.list.count())}
-        for p in paths:
-            if p not in known:
-                item = QListWidgetItem(f"WAITING  ·  {p}"); item.setData(Qt.ItemDataRole.UserRole, p); self.list.addItem(item); known.add(p)
-                self.main.add_recent(p)
-                if self.list.count() == 1: self.folder_edit.setText(str(Path(p).parent / "sparse-to-raw-output"))
+        for path in paths:
+            self._new_item(path)
+        self._refresh_summary()
+        self._update_action_states()
+
     def _remove(self) -> None:
-        for item in self.list.selectedItems(): self.list.takeItem(self.list.row(item))
+        if self._is_running():
+            return
+        for item in self.list.selectedItems():
+            self.list.takeItem(self.list.row(item))
+        self._refresh_summary()
+        self._update_action_states()
+
+    def _clear(self) -> None:
+        if self._is_running():
+            return
+        self.list.clear()
+        self.progress.setValue(0)
+        self.progress_label.setText(self.main.t("ready"))
+        self._last_progress_label = self.main.t("ready")
+        self._refresh_summary()
+        self._update_action_states()
+
+    def _move_selected(self, delta: int) -> None:
+        if self._is_running():
+            return
+        selected_rows = sorted((self.list.row(item) for item in self.list.selectedItems()), reverse=(delta > 0))
+        for row in selected_rows:
+            target = row + delta
+            if 0 <= target < self.list.count():
+                item = self.list.takeItem(row)
+                self.list.insertItem(target, item)
+                item.setSelected(True)
+        self._update_action_states()
+
     def _browse_folder(self) -> None:
         path = QFileDialog.getExistingDirectory(self, self.main.t("output_folder"), self.folder_edit.text())
         if path:
-            self.folder_edit.setText(path); self.main.settings.setValue("queue_output_dir", path)
-    def _run(self) -> None:
-        if self.thread and self.thread.isRunning(): return
+            self.folder_edit.setText(path)
+            self.main.settings.setValue("queue_output_dir", path)
+
+    def _is_running(self) -> bool:
+        return self._running
+
+    def _update_action_states(self) -> None:
+        running = self._is_running()
+        selected = self.list.selectedItems()
+        selected_statuses = [str(item.data(self.ROLE_STATUS) or "waiting") for item in selected]
+        for button in self.queue_mutation_buttons:
+            button.setEnabled(not running and bool(self.list.count()))
+        if self.queue_mutation_buttons:
+            self.queue_mutation_buttons[0].setEnabled(not running)
+            self.queue_mutation_buttons[1].setEnabled(not running and bool(selected))
+            self.queue_mutation_buttons[2].setEnabled(not running and bool(self.list.count()))
+            self.queue_mutation_buttons[3].setEnabled(not running and bool(selected))
+            self.queue_mutation_buttons[4].setEnabled(not running and bool(selected))
+        self.list.setDragEnabled(not running)
+        self.list.setDragDropMode(
+            QAbstractItemView.DragDropMode.NoDragDrop if running
+            else QAbstractItemView.DragDropMode.InternalMove
+        )
+        self.folder_edit.setEnabled(not running)
+        self.overwrite.setEnabled(not running)
+        self.verify_output.setEnabled(not running)
+        self.filter_combo.setEnabled(True)
+        self.run_button.setEnabled(not running and any(
+            self.list.item(i).data(self.ROLE_STATUS) == "waiting" for i in range(self.list.count())
+        ))
+        self.pause_button.setEnabled(running)
+        self.cancel_button.setEnabled(running)
+        self.cancel_selected_button.setEnabled(running and any(s in {"waiting", "running"} for s in selected_statuses))
+        self.skip_selected_button.setEnabled((running and any(s in {"waiting", "running"} for s in selected_statuses)) or (not running and any(s == "waiting" for s in selected_statuses)))
+        self.retry_selected_button.setEnabled(not running and any(s in {"failed", "cancelled", "skipped"} for s in selected_statuses))
+
+    def _apply_filter(self, *_args) -> None:
+        wanted = self.filter_combo.currentData()
+        for index in range(self.list.count()):
+            item = self.list.item(index)
+            status = item.data(self.ROLE_STATUS) or "waiting"
+            filter_status = item.data(self.ROLE_REQUEST_ORIGINAL_STATUS) if status in {"cancel_requested", "skip_requested"} else status
+            hidden = wanted != "all" and filter_status != wanted
+            item.setHidden(hidden)
+            if hidden and item.isSelected():
+                item.setSelected(False)
+        self._update_action_states()
+
+    def _refresh_summary(self, *_args) -> None:
+        counts = {name: 0 for name in ("waiting", "running", "success", "failed", "cancelled", "skipped")}
+        for index in range(self.list.count()):
+            item = self.list.item(index)
+            status = item.data(self.ROLE_STATUS) or "waiting"
+            if status in {"cancel_requested", "skip_requested"}:
+                status = item.data(self.ROLE_REQUEST_ORIGINAL_STATUS) or "waiting"
+            if status in counts:
+                counts[status] += 1
+        self.summary_label.setText(self.main.t("queue_summary").format(total=self.list.count(), **counts))
+
+    def _run(self, only_task_ids: set[str] | None = None) -> None:
+        if self._is_running():
+            return
         if self.main.operation_running(exclude=self):
-            QMessageBox.information(self, self.main.t("queue_title"), self.main.t("another_operation")); return
-        sources = [Path(self.list.item(i).data(Qt.ItemDataRole.UserRole)) for i in range(self.list.count())]
-        if not sources: QMessageBox.information(self, self.main.t("queue_title"), self.main.t("add_files")); return
+            QMessageBox.information(self, self.main.t("queue_title"), self.main.t("another_operation"))
+            return
+
+        selected_rows: list[tuple[str, Path]] = []
+        for index in range(self.list.count()):
+            item = self.list.item(index)
+            task_id = str(item.data(self.ROLE_TASK_ID))
+            status = str(item.data(self.ROLE_STATUS) or "waiting")
+            if status == "waiting" and (only_task_ids is None or task_id in only_task_ids):
+                selected_rows.append((task_id, Path(str(item.data(self.ROLE_SOURCE)))))
+        if not selected_rows:
+            QMessageBox.information(self, self.main.t("queue_title"), self.main.t("add_files"))
+            return
+
+        sources = [source for _, source in selected_rows]
+        task_ids = [task_id for task_id, _ in selected_rows]
         output_dir = Path(self.folder_edit.text()).expanduser().resolve()
-        try: output_dir.mkdir(parents=True, exist_ok=True)
-        except OSError as exc: QMessageBox.critical(self, "Error", str(exc)); return
         try:
-            preflight = preflight_batch(sources, output_dir, overwrite=self.overwrite.isChecked())
+            output_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            QMessageBox.critical(self, "Error", str(exc))
+            return
+        try:
+            preflight_batch(sources, output_dir, overwrite=self.overwrite.isChecked())
         except Exception as exc:
             QMessageBox.warning(
                 self, self.main.t("queue_title"),
@@ -649,46 +1115,231 @@ class BatchQueueDialog(QDialog):
             )
             self._log("error", f"Batch preflight failed: {type(exc).__name__}: {exc}")
             return
+
+        self.filter_combo.setCurrentIndex(self.filter_combo.findData("all"))
         self.main.settings.setValue("queue_output_dir", str(output_dir))
-        self.list.setEnabled(False); self.folder_edit.setEnabled(False); self.overwrite.setEnabled(False); self.verify_output.setEnabled(False)
-        for button in self.queue_mutation_buttons: button.setEnabled(False)
-        self.run_button.setEnabled(False); self.cancel_button.setEnabled(True); self.progress.setValue(0)
-        for i in range(self.list.count()): self.list.item(i).setText(f"{'ОЖИДАНИЕ' if self.main.language == 'ru' else 'WAITING'}  ·  {sources[i]}")
+        self._run_task_ids = task_ids
+        self._run_finished_count = 0
+        self._running = True
+        self._pause_active = False
+        self.list.setDragEnabled(False)
+        self.list.setDragDropMode(QAbstractItemView.DragDropMode.NoDragDrop)
+        self.folder_edit.setEnabled(False)
+        self.overwrite.setEnabled(False)
+        self.verify_output.setEnabled(False)
+        for button in self.queue_mutation_buttons:
+            button.setEnabled(False)
+        self.run_button.setEnabled(False)
+        self.pause_button.setEnabled(True)
+        self.pause_button.setText(self.main.t("queue_pause"))
+        self.cancel_button.setEnabled(True)
+        self.progress.setValue(0)
+        self.progress_label.setText(f"0 / {len(sources)}")
+        self._last_progress_label = self.progress_label.text()
+
         worker = BatchWorkerObject(
             sources, output_dir, self.overwrite.isChecked(),
-            verify_output=self.verify_output.isChecked(),
-        ); self.worker = worker
-        worker.log.connect(self._log); worker.progress.connect(self._progress); worker.item_finished.connect(self._item_finished); worker.finished_report.connect(self._report_done)
-        thread = QThread(self); worker.moveToThread(thread); thread.started.connect(worker.run); worker.finished.connect(thread.quit); worker.finished.connect(worker.deleteLater); thread.finished.connect(thread.deleteLater); thread.finished.connect(self._thread_finished)
-        self.thread = thread; thread.start()
-    def _log(self, level: str, message: str) -> None: self.log_view.append(f"[{level.upper()}] {message}"); self.main.append_log(level, message)
-    def _progress(self, data: dict) -> None: self.progress.setValue(int(data.get("queue_percent", data.get("percent",0))))
+            verify_output=self.verify_output.isChecked(), task_ids=task_ids,
+        )
+        self.worker = worker
+        worker.log.connect(self._log)
+        worker.progress.connect(self._progress)
+        worker.item_started.connect(self._item_started)
+        worker.item_finished.connect(self._item_finished)
+        worker.pause_changed.connect(self._pause_changed)
+        worker.finished_report.connect(self._report_done)
+
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._thread_finished)
+        self.thread = thread
+        self._update_action_states()
+        thread.start()
+
+    def _retry_selected(self) -> None:
+        retry_ids: set[str] = set()
+        for item in self.list.selectedItems():
+            status = item.data(self.ROLE_STATUS)
+            if status in {"failed", "cancelled", "skipped"}:
+                retry_ids.add(str(item.data(self.ROLE_TASK_ID)))
+        if not retry_ids:
+            QMessageBox.information(self, self.main.t("queue_title"), self.main.t("queue_no_retry"))
+            return
+        self.filter_combo.setCurrentIndex(self.filter_combo.findData("all"))
+        for task_id in retry_ids:
+            self._set_item_status(task_id, "waiting")
+        self._log("info", self.main.t("queue_retry_hint"))
+        self._run(only_task_ids=retry_ids)
+
+    def _cancel_selected(self) -> None:
+        if not self.worker or not self._is_running():
+            return
+        for item in self.list.selectedItems():
+            status = str(item.data(self.ROLE_STATUS) or "waiting")
+            if status not in {"waiting", "running"}:
+                continue
+            task_id = str(item.data(self.ROLE_TASK_ID))
+            if self.worker.cancel_task(task_id):
+                self._set_item_status(task_id, "cancel_requested")
+                self._log("warning", self.main.t("queue_item_cancel_requested").format(path=item.data(self.ROLE_SOURCE)))
+
+    def _skip_selected(self) -> None:
+        selected = self.list.selectedItems()
+        if self._is_running() and self.worker:
+            for item in selected:
+                status = str(item.data(self.ROLE_STATUS) or "waiting")
+                if status not in {"waiting", "running"}:
+                    continue
+                task_id = str(item.data(self.ROLE_TASK_ID))
+                if self.worker.skip_task(task_id):
+                    self._set_item_status(task_id, "skip_requested")
+                    self._log("warning", self.main.t("queue_item_skip_requested").format(path=item.data(self.ROLE_SOURCE)))
+        else:
+            for item in selected:
+                if item.data(self.ROLE_STATUS) == "waiting":
+                    self._set_item_status(str(item.data(self.ROLE_TASK_ID)), "skipped", "Skipped by user")
+        self._update_action_states()
+
+    def _add_files(self) -> None:
+        if self._is_running():
+            return
+        paths, _ = QFileDialog.getOpenFileNames(self, self.main.t("add_files"), str(Path.home()), "Images (*)")
+        for path in paths:
+            self._new_item(path)
+        self._refresh_summary()
+        self._update_action_states()
+
+    def _remove(self) -> None:
+        if self._is_running():
+            return
+        for item in self.list.selectedItems():
+            self.list.takeItem(self.list.row(item))
+        self._refresh_summary()
+        self._update_action_states()
+
+    def _clear(self) -> None:
+        if self._is_running():
+            return
+        self.list.clear()
+        self.progress.setValue(0)
+        self.progress_label.setText(self.main.t("ready"))
+        self._last_progress_label = self.main.t("ready")
+        self._refresh_summary()
+        self._update_action_states()
+
+    def _move_selected(self, delta: int) -> None:
+        if self._is_running():
+            return
+        rows = sorted((self.list.row(item) for item in self.list.selectedItems()), reverse=(delta > 0))
+        for row in rows:
+            target = row + delta
+            if 0 <= target < self.list.count():
+                item = self.list.takeItem(row)
+                self.list.insertItem(target, item)
+                item.setSelected(True)
+        self._update_action_states()
+
+    def _browse_folder(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, self.main.t("output_folder"), self.folder_edit.text())
+        if path:
+            self.folder_edit.setText(path)
+            self.main.settings.setValue("queue_output_dir", path)
+
+    def _log(self, level: str, message: str) -> None:
+        self.log_view.append(f"[{level.upper()}] {message}")
+        self.main.append_log(level, message)
+
+    def _item_started(self, task_id: str) -> None:
+        self._set_item_status(task_id, "running")
+        self._update_action_states()
+
+    def _progress(self, data: dict) -> None:
+        self.progress.setValue(int(data.get("queue_percent", data.get("percent", 0))))
+        index = int(data.get("queue_index", 0)) + 1
+        total = int(data.get("queue_total", len(self._run_task_ids)))
+        current = Path(str(data.get("queue_current_file", ""))).name
+        self.progress_label.setText(f"{index}/{total} · {current} · {int(data.get('percent', 0))}%")
+        self._last_progress_label = self.progress_label.text()
+
     def _item_finished(self, index: int, row: dict) -> None:
-        if 0 <= index < self.list.count():
-            status = row.get("status", "unknown").lower()
-            states_ru = {"success": "УСПЕШНО", "failed": "ОШИБКА", "cancelled": "ОТМЕНЕНО"}
-            states_en = {"success": "SUCCESS", "failed": "FAILED", "cancelled": "CANCELLED"}
-            state = (states_ru if self.main.language == "ru" else states_en).get(status, status.upper())
-            self.list.item(index).setText(f"{state}  ·  {row.get('input','')}")
-            self.list.item(index).setForeground(QColor(COLORS["green"] if status == "success" else COLORS["amber"] if status == "cancelled" else COLORS["red"]))
+        task_id = str(row.get("task_id", self._run_task_ids[index] if index < len(self._run_task_ids) else ""))
+        self._set_item_status(task_id, str(row.get("status", "failed")), str(row.get("error", "")))
+        self._run_finished_count += 1
+        total = max(1, len(self._run_task_ids))
+        self.progress.setValue(min(100, int(self._run_finished_count * 100 / total)))
+        self.progress_label.setText(f"{self._run_finished_count}/{total}")
+        self._last_progress_label = self.progress_label.text()
+        self._update_action_states()
+
+    def _pause_changed(self, paused: bool) -> None:
+        self._pause_active = paused
+        self.pause_button.setText(self.main.t("queue_resume" if paused else "queue_pause"))
+        self.pause_button.setIcon(self.main.icon_for("SP_MediaPlay" if paused else "SP_MediaPause"))
+        self.progress_label.setText(self.main.t("queue_paused_log") if paused else self._last_progress_label)
+        self._log("info", self.main.t("queue_paused_log" if paused else "queue_resumed_log"))
+        self._update_action_states()
+
+    def _toggle_pause(self) -> None:
+        if not self.worker or not self._is_running():
+            return
+        if self.worker.is_pause_requested():
+            self.worker.resume()
+            self.pause_button.setText(self.main.t("queue_pause"))
+            self.pause_button.setIcon(self.main.icon_for("SP_MediaPause"))
+        else:
+            self.worker.request_pause()
+            self.pause_button.setText(self.main.t("queue_pausing"))
+
     def _report_done(self, report: dict) -> None:
-        summary = report.get("summary", {}); self.progress.setValue(100 if summary.get("success",0) and not summary.get("failed",0) else self.progress.value())
+        summary = report.get("summary", {})
+        self.progress.setValue(100)
+        self.progress_label.setText(self.main.t("queue_summary").format(
+            total=summary.get("total", 0), waiting=0, running=0, success=summary.get("success", 0),
+            failed=summary.get("failed", 0), cancelled=summary.get("cancelled", 0),
+            skipped=summary.get("skipped", 0),
+        ))
+        self._last_progress_label = self.progress_label.text()
         self.log_view.append("\n" + json.dumps(summary, ensure_ascii=False, indent=2))
-        if report.get("report_path"): self.log_view.append(f"Report: {report['report_path']}")
+        if report.get("report_path"):
+            self.log_view.append(f"Report: {report['report_path']}")
+
     def _thread_finished(self) -> None:
-        self.thread = None; self.worker = None; self.run_button.setEnabled(True); self.cancel_button.setEnabled(False)
-        self.list.setEnabled(True); self.folder_edit.setEnabled(True); self.overwrite.setEnabled(True); self.verify_output.setEnabled(True)
-        for button in self.queue_mutation_buttons: button.setEnabled(True)
-        if self._close_when_finished: self.close()
+        self._running = False
+        self.thread = None
+        self.worker = None
+        self.run_button.setEnabled(True)
+        self.pause_button.setEnabled(False)
+        self.pause_button.setText(self.main.t("queue_pause"))
+        self.cancel_button.setEnabled(False)
+        self.list.setDragEnabled(True)
+        self.folder_edit.setEnabled(True)
+        self.overwrite.setEnabled(True)
+        self.verify_output.setEnabled(True)
+        for button in self.queue_mutation_buttons:
+            button.setEnabled(True)
+        self._update_action_states()
+        if self._close_when_finished:
+            self.close()
         self.main._check_close_after_workers()
+
     def closeEvent(self, event) -> None:  # noqa: N802
-        if self.thread is not None and self.thread.isRunning():
+        if self._is_running():
             self._close_when_finished = True
-            if self.worker is not None: self.worker.request_cancel()
-            event.ignore(); return
+            if self.worker is not None:
+                self.worker.request_cancel()
+            event.ignore()
+            return
         event.accept()
+
     def _cancel(self) -> None:
-        if self.worker: self.cancel_button.setEnabled(False); self.worker.request_cancel(); self._log("warning", "Cancellation requested; current file will stop at a safe boundary.")
+        if self.worker:
+            self.cancel_button.setEnabled(False)
+            self.worker.request_cancel()
+            self._log("warning", "Queue cancellation requested; the current file will stop at a safe boundary.")
 
 
 class MergeDialog(QDialog):
