@@ -4,6 +4,8 @@ import struct
 import tempfile
 import unittest
 import zlib
+from types import SimpleNamespace
+from unittest.mock import patch
 from pathlib import Path
 from contextlib import redirect_stdout, redirect_stderr
 from io import StringIO
@@ -21,6 +23,9 @@ from sparse_to_raw import (
     discover_sparse_parts,
     inspect_sparse,
     merge_sparse_to_raw,
+    preflight_batch,
+    preflight_output,
+    InsufficientDiskSpaceError,
     main,
 )
 
@@ -82,6 +87,8 @@ class SparseToRawTests(unittest.TestCase):
         ]
         self.input_path.write_bytes(make_sparse(chunks, raw_data))
         result = convert_sparse_to_raw(self.input_path, self.output_path)
+        self.assertTrue(result["preflight"]["passed"])
+        self.assertEqual(result["preflight"]["operation"], "convert")
         self.assertEqual(self.output_path.read_bytes(), raw_data)
         self.assertEqual(self.output_path.stat().st_size, len(raw_data))
         self.assertEqual(result["total_blocks"], 4)
@@ -350,6 +357,116 @@ class SparseToRawTests(unittest.TestCase):
             ])
         self.assertEqual(code, 0, stderr.getvalue())
         self.assertEqual(self.output_path.read_bytes(), b"AAAABBBB")
+
+
+
+    def test_preflight_conversion_reports_sizes_and_cleans_probe_file(self) -> None:
+        raw = b"DATA"
+        self.input_path.write_bytes(make_sparse([chunk(CHUNK_RAW, 1, raw)], raw))
+
+        report = preflight_output([self.input_path], self.output_path)
+
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["operation"], "convert")
+        self.assertEqual(report["expected_output_bytes"], len(raw))
+        self.assertEqual(report["peak_additional_bytes"], len(raw))
+        self.assertGreaterEqual(report["required_free_bytes"], len(raw))
+        self.assertGreater(report["available_free_bytes"], 0)
+        self.assertEqual(report["write_probe"], "passed")
+        self.assertEqual(list(self.root.glob(".sparse-to-raw-preflight-*.tmp")), [])
+
+    def test_preflight_rejects_insufficient_free_space_before_output_creation(self) -> None:
+        raw = b"DATA"
+        self.input_path.write_bytes(make_sparse([chunk(CHUNK_RAW, 1, raw)], raw))
+        with patch("sparse_to_raw.shutil.disk_usage", return_value=SimpleNamespace(total=100, used=100, free=0)):
+            with self.assertRaises(InsufficientDiskSpaceError):
+                convert_sparse_to_raw(self.input_path, self.output_path)
+        self.assertFalse(self.output_path.exists())
+        self.assertEqual(list(self.root.glob(".sparse-to-raw-preflight-*.tmp")), [])
+
+    def test_preflight_reports_output_directory_write_failure(self) -> None:
+        raw = b"DATA"
+        self.input_path.write_bytes(make_sparse([chunk(CHUNK_RAW, 1, raw)], raw))
+        with patch("sparse_to_raw.tempfile.mkstemp", side_effect=PermissionError("access denied")):
+            with self.assertRaisesRegex(PermissionError, "Cannot create a temporary file"):
+                preflight_output([self.input_path], self.output_path)
+        self.assertFalse(self.output_path.exists())
+
+    def test_preflight_merge_accounts_for_final_stage_and_largest_part(self) -> None:
+        first = self.root / "part0.sparse"
+        second = self.root / "part1.sparse"
+        first_raw = b"AAAA"
+        second_raw = b"BBBBCCCC"
+        first.write_bytes(make_sparse([chunk(CHUNK_RAW, 1, first_raw)], first_raw))
+        second.write_bytes(make_sparse([chunk(CHUNK_RAW, 2, second_raw)], second_raw))
+
+        report = preflight_output([first, second], self.output_path, operation="merge")
+
+        self.assertEqual(report["operation"], "merge")
+        self.assertEqual(report["expected_output_bytes"], 12)
+        self.assertEqual(report["part_raw_sizes_bytes"], [4, 8])
+        self.assertEqual(report["peak_additional_bytes"], 20)
+        self.assertEqual(report["outputs"][0]["path"], str(self.output_path.resolve()))
+
+    def test_preflight_batch_accounts_for_all_outputs(self) -> None:
+        first = self.root / "first.sparse"
+        second = self.root / "second.sparse"
+        first_raw = b"AAAA"
+        second_raw = b"BBBBCCCC"
+        first.write_bytes(make_sparse([chunk(CHUNK_RAW, 1, first_raw)], first_raw))
+        second.write_bytes(make_sparse([chunk(CHUNK_RAW, 2, second_raw)], second_raw))
+        output_dir = self.root / "batch-output"
+        output_dir.mkdir()
+
+        report = preflight_batch([first, second], output_dir)
+
+        self.assertEqual(report["operation"], "batch")
+        self.assertEqual(report["expected_output_bytes"], 12)
+        self.assertEqual(report["peak_additional_bytes"], 12)
+        self.assertEqual([Path(item["output"]).name for item in report["outputs"]],
+                         ["first_raw.img", "second_raw.img"])
+
+    def test_preflight_batch_rejects_colliding_output_names_before_work(self) -> None:
+        one = self.root / "one"
+        two = self.root / "two"
+        output_dir = self.root / "batch-output"
+        one.mkdir(); two.mkdir(); output_dir.mkdir()
+        raw = b"DATA"
+        payload = make_sparse([chunk(CHUNK_RAW, 1, raw)], raw)
+        first = one / "same.sparse"
+        second = two / "same.sparse"
+        first.write_bytes(payload); second.write_bytes(payload)
+
+        with self.assertRaisesRegex(ValueError, "output-name collision"):
+            preflight_batch([first, second], output_dir)
+        self.assertEqual(list(output_dir.iterdir()), [])
+
+
+    def test_preflight_batch_rejects_output_that_is_another_input(self) -> None:
+        first = self.root / "sample.sparse"
+        second = self.root / "sample_raw.img"
+        raw = b"DATA"
+        payload = make_sparse([chunk(CHUNK_RAW, 1, raw)], raw)
+        first.write_bytes(payload)
+        second.write_bytes(payload)
+        output_dir = self.root
+
+        with self.assertRaisesRegex(ValueError, "would overwrite an input file"):
+            preflight_batch([first, second], output_dir, overwrite=True)
+        self.assertEqual(second.read_bytes(), payload)
+
+
+    def test_preflight_batch_rejects_existing_output_without_overwrite(self) -> None:
+        raw = b"DATA"
+        self.input_path.write_bytes(make_sparse([chunk(CHUNK_RAW, 1, raw)], raw))
+        output_dir = self.root / "batch-output"
+        output_dir.mkdir()
+        existing = output_dir / "sample_raw.img"
+        existing.write_bytes(b"KEEP")
+
+        with self.assertRaises(FileExistsError):
+            preflight_batch([self.input_path], output_dir, overwrite=False)
+        self.assertEqual(existing.read_bytes(), b"KEEP")
 
 
     def test_zero_byte_image_reports_100_percent_only_after_validation(self) -> None:

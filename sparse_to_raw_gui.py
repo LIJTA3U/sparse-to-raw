@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import sys
 import tempfile
 import threading
@@ -39,6 +38,8 @@ from sparse_to_raw import (
     discover_sparse_parts,
     inspect_sparse,
     merge_sparse_to_raw,
+    preflight_batch,
+    preflight_output,
 )
 
 APP_VERSION = "v0.4.0"
@@ -189,9 +190,12 @@ def friendly_error(message: str, language: str = "ru") -> str:
         (("unexpected end of file", "truncated", "обрезан"),
          "Файл обрезан: данных меньше, чем требуется по заголовку.",
          "The file is truncated: it contains less data than declared by its header."),
-        (("no space left", "disk full", "not enough space"),
-         "Недостаточно свободного места для завершения операции.",
-         "There is not enough free disk space to complete the operation."),
+        (("insufficient free disk space", "no space left", "disk full", "not enough space"),
+         "Недостаточно свободного места для операции. Освободи место или выбери другой диск.",
+         "There is not enough free disk space. Free some space or choose another drive."),
+        (("batch output-name collision", "would overwrite an input file"),
+         "В очереди есть конфликт имён выходных файлов. Измени имена или выбери другую папку.",
+         "The batch contains an output-name conflict. Rename the inputs or choose another folder."),
         (("output file already exists", "file already exists", "already exists"),
          "Выходной файл уже существует. Выбери другое имя или подтверди перезапись.",
          "The output file already exists. Choose another path or confirm overwrite."),
@@ -389,61 +393,117 @@ class BatchWorkerObject(QObject):
         self._cancel_event = threading.Event()
     @Slot()
     def run(self) -> None:
-        from sparse_to_raw import _format_duration
-        started = datetime.now(); rows: list[dict[str, Any]] = []; total = len(self.sources)
+        started = datetime.now()
+        rows: list[dict[str, Any]] = []
+        total = len(self.sources)
+        preflight_report: dict[str, Any] | None = None
         planned_outputs: dict[str, list[int]] = {}
         for i, source_item in enumerate(self.sources):
-            planned_outputs.setdefault(str((self.output_dir / f"{source_item.stem}_raw.img").resolve()).casefold(), []).append(i)
-        collision_indices = {i for indices in planned_outputs.values() if len(indices) > 1 for i in indices}
+            key = str((self.output_dir / f"{source_item.stem}_raw.img").resolve()).casefold()
+            planned_outputs.setdefault(key, []).append(i)
+        collision_indices = {
+            index for indices in planned_outputs.values() if len(indices) > 1 for index in indices
+        }
         self.log.emit("info", f"Batch started: {total} file(s).")
         try:
-            for index, source in enumerate(self.sources):
-                if self._cancel_event.is_set():
-                    rows.append({"input": str(source), "status": "cancelled", "error": "Cancelled before start"})
-                    self.item_finished.emit(index, rows[-1]); continue
-                destination = self.output_dir / f"{source.stem}_raw.img"
-                self.log.emit("info", f"[{index+1}/{total}] {source}")
-                row: dict[str, Any] = {"input": str(source), "output": str(destination), "status": "failed"}
-                try:
-                    if index in collision_indices:
-                        raise ValueError(f"Output-name collision: multiple input files map to {destination}. Use different file names or output folders.")
-                    if destination.exists() and not self.overwrite:
-                        raise FileExistsError(f"Output exists; skipped to prevent overwrite: {destination}")
-                    def per_file_progress(data: dict[str, Any], *, _idx=index) -> None:
-                        current = int(data.get("percent", 0))
-                        self.progress.emit({**data, "queue_index": _idx, "queue_total": total,
-                                            "queue_percent": int((_idx + current / 100) * 100 / max(total, 1)),
-                                            "queue_current_file": str(source)})
-                    result = convert_sparse_to_raw(source, destination, force=self.overwrite, calculate_sha256=True,
-                        progress_callback=per_file_progress, event_callback=self.log.emit,
-                        cancel_requested=self._cancel_event.is_set)
-                    row.update({"status": "success", "result": result})
-                    self.log.emit("success", f"[{index+1}/{total}] Completed: {destination}")
-                except ConversionCancelled:
-                    row.update({"status": "cancelled", "error": "Cancelled by user"})
-                    self.log.emit("warning", f"[{index+1}/{total}] Cancelled: {source}")
-                except Exception as exc:
-                    row.update({"status": "failed", "error": f"{type(exc).__name__}: {exc}"})
-                    self.log.emit("error", f"[{index+1}/{total}] Failed: {source}\n{type(exc).__name__}: {exc}")
-                rows.append(row); self.item_finished.emit(index, row)
-                if self._cancel_event.is_set():
-                    for later in self.sources[index+1:]:
-                        row2 = {"input": str(later), "status": "cancelled", "error": "Cancelled before start"}
-                        rows.append(row2); self.item_finished.emit(len(rows)-1, row2)
-                    break
-            report = {"application": APP_NAME, "version": APP_VERSION, "generated_at": datetime.now().astimezone().isoformat(),
-                      "started_at": started.astimezone().isoformat(), "output_directory": str(self.output_dir),
-                      "summary": {"total": len(self.sources), "success": sum(r["status"] == "success" for r in rows),
-                                  "failed": sum(r["status"] == "failed" for r in rows),
-                                  "cancelled": sum(r["status"] == "cancelled" for r in rows)}, "items": rows}
+            try:
+                preflight_report = preflight_batch(
+                    self.sources, self.output_dir, overwrite=self.overwrite
+                )
+                self.log.emit(
+                    "success",
+                    "Batch preflight passed: "
+                    f"{format_bytes(preflight_report['available_free_bytes'], 'en')} free; "
+                    f"{format_bytes(preflight_report['required_free_bytes'], 'en')} required including safety margin.",
+                )
+            except Exception as exc:
+                message = (
+                    "Batch preflight failed; no files were converted: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+                self.log.emit("error", message)
+                for index, source in enumerate(self.sources):
+                    row = {"input": str(source), "status": "failed", "error": message}
+                    rows.append(row)
+                    self.item_finished.emit(index, row)
+
+            if preflight_report is not None:
+                for index, source in enumerate(self.sources):
+                    if self._cancel_event.is_set():
+                        rows.append({"input": str(source), "status": "cancelled", "error": "Cancelled before start"})
+                        self.item_finished.emit(index, rows[-1])
+                        continue
+                    destination = self.output_dir / f"{source.stem}_raw.img"
+                    self.log.emit("info", f"[{index+1}/{total}] {source}")
+                    row: dict[str, Any] = {"input": str(source), "output": str(destination), "status": "failed"}
+                    try:
+                        if index in collision_indices:
+                            raise ValueError(
+                                f"Output-name collision: multiple input files map to {destination}. "
+                                "Use different file names or output folders."
+                            )
+                        if destination.exists() and not self.overwrite:
+                            raise FileExistsError(
+                                f"Output exists; skipped to prevent overwrite: {destination}"
+                            )
+
+                        def per_file_progress(data: dict[str, Any], *, _idx=index) -> None:
+                            current = int(data.get("percent", 0))
+                            self.progress.emit({
+                                **data,
+                                "queue_index": _idx,
+                                "queue_total": total,
+                                "queue_percent": int((_idx + current / 100) * 100 / max(total, 1)),
+                                "queue_current_file": str(source),
+                            })
+
+                        result = convert_sparse_to_raw(
+                            source, destination, force=self.overwrite, calculate_sha256=True,
+                            progress_callback=per_file_progress, event_callback=self.log.emit,
+                            cancel_requested=self._cancel_event.is_set,
+                        )
+                        row.update({"status": "success", "result": result})
+                        self.log.emit("success", f"[{index+1}/{total}] Completed: {destination}")
+                    except ConversionCancelled:
+                        row.update({"status": "cancelled", "error": "Cancelled by user"})
+                        self.log.emit("warning", f"[{index+1}/{total}] Cancelled: {source}")
+                    except Exception as exc:
+                        row.update({"status": "failed", "error": f"{type(exc).__name__}: {exc}"})
+                        self.log.emit("error", f"[{index+1}/{total}] Failed: {source}\n{type(exc).__name__}: {exc}")
+                    rows.append(row)
+                    self.item_finished.emit(index, row)
+                    if self._cancel_event.is_set():
+                        for later in self.sources[index+1:]:
+                            row2 = {"input": str(later), "status": "cancelled", "error": "Cancelled before start"}
+                            rows.append(row2)
+                            self.item_finished.emit(len(rows)-1, row2)
+                        break
+
+            report = {
+                "application": APP_NAME,
+                "version": APP_VERSION,
+                "generated_at": datetime.now().astimezone().isoformat(),
+                "started_at": started.astimezone().isoformat(),
+                "output_directory": str(self.output_dir),
+                "preflight": preflight_report,
+                "summary": {
+                    "total": len(self.sources),
+                    "success": sum(row["status"] == "success" for row in rows),
+                    "failed": sum(row["status"] == "failed" for row in rows),
+                    "cancelled": sum(row["status"] == "cancelled" for row in rows),
+                },
+                "items": rows,
+            }
             report_path = self.output_dir / f"sparse-to-raw-batch-report-{datetime.now():%Y%m%d-%H%M%S-%f}.json"
             try:
                 report_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-                report["report_path"] = str(report_path); self.log.emit("success", f"Batch report saved: {report_path}")
+                report["report_path"] = str(report_path)
+                self.log.emit("success", f"Batch report saved: {report_path}")
             except OSError as exc:
                 self.log.emit("warning", f"Could not save batch JSON report: {exc}")
             self.finished_report.emit(report)
-        finally: self.finished.emit()
+        finally:
+            self.finished.emit()
     def request_cancel(self) -> None: self._cancel_event.set()
 
 
@@ -557,6 +617,15 @@ class BatchQueueDialog(QDialog):
         output_dir = Path(self.folder_edit.text()).expanduser().resolve()
         try: output_dir.mkdir(parents=True, exist_ok=True)
         except OSError as exc: QMessageBox.critical(self, "Error", str(exc)); return
+        try:
+            preflight = preflight_batch(sources, output_dir, overwrite=self.overwrite.isChecked())
+        except Exception as exc:
+            QMessageBox.warning(
+                self, self.main.t("queue_title"),
+                f"{friendly_error(str(exc), self.main.language)}\n\nDetails: {exc}",
+            )
+            self._log("error", f"Batch preflight failed: {type(exc).__name__}: {exc}")
+            return
         self.main.settings.setValue("queue_output_dir", str(output_dir))
         self.list.setEnabled(False); self.folder_edit.setEnabled(False); self.overwrite.setEnabled(False)
         for button in self.queue_mutation_buttons: button.setEnabled(False)
@@ -754,9 +823,25 @@ class MergeDialog(QDialog):
             answer=QMessageBox.question(self,self.main.t("confirm_title"),self.main.t("confirm_overwrite").format(path=out),QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,QMessageBox.StandardButton.No)
             if answer!=QMessageBox.StandardButton.Yes: return
             force=True
+        self.log_view.clear()
+        try:
+            preflight = preflight_output(sources, out, operation="merge", force=force)
+        except Exception as exc:
+            self._log("error", f"Merge preflight failed: {type(exc).__name__}: {exc}")
+            QMessageBox.warning(
+                self, self.main.t("merge_title"),
+                f"{friendly_error(str(exc), self.main.language)}\n\nDetails: {exc}",
+            )
+            return
+        self._log(
+            "success",
+            "Preflight passed: "
+            f"{format_bytes(preflight['available_free_bytes'], self.main.language)} free; "
+            f"{format_bytes(preflight['required_free_bytes'], self.main.language)} required including merge staging and safety margin.",
+        )
         self.parts.setEnabled(False); self.output_edit.setEnabled(False)
         for button in self.part_controls: button.setEnabled(False)
-        self.run_button.setEnabled(False); self.cancel_button.setEnabled(True); self.progress.setValue(0); self.log_view.clear(); self.result=None; self.save_report.setEnabled(False)
+        self.run_button.setEnabled(False); self.cancel_button.setEnabled(True); self.progress.setValue(0); self.result=None; self.save_report.setEnabled(False)
         worker=ConversionWorkerObject(None,out,force,operation="merge",merge_sources=sources); self.worker=worker
         worker.progress.connect(lambda d:self.progress.setValue(int(d.get("percent",0))))
         worker.log.connect(self._log); worker.succeeded.connect(self._success); worker.failed.connect(self._failure); worker.cancelled.connect(lambda:self._log("warning","Merge cancelled; staged output discarded."))
@@ -1033,15 +1118,27 @@ class MainWindow(QWidget):
         except Exception as exc:
             self.append_log("error",f"Validation error: {type(exc).__name__}: {exc}"); self._set_status(I18N[self.language]["status_error"],"red"); QMessageBox.warning(self,self.t("window_title"),str(exc)); return
         self._expected_size=expected_size; self._total_chunks=0
-        free_bytes=shutil.disk_usage(destination.parent).free
-        if free_bytes<expected_size:
-            question=f"Free space: {format_bytes(free_bytes,self.language)}\nExpected RAW size: {format_bytes(expected_size,self.language)}\n\nContinue anyway?"
-            if QMessageBox.warning(self,"Low disk space",question,QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.Cancel,QMessageBox.StandardButton.Cancel)!=QMessageBox.StandardButton.Yes: return
         force=False
         if destination.exists():
             if QMessageBox.question(self,self.t("confirm_title"),self.t("confirm_overwrite").format(path=destination),QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,QMessageBox.StandardButton.No)!=QMessageBox.StandardButton.Yes:
                 self.append_log("warning","Conversion cancelled; existing output preserved."); return
             force=True
+        try:
+            preflight = preflight_output([source], destination, operation="convert", force=force)
+        except Exception as exc:
+            self.append_log("error", f"Preflight failed: {type(exc).__name__}: {exc}")
+            self._set_status(I18N[self.language]["status_error"],"red")
+            QMessageBox.warning(
+                self, self.t("window_title"),
+                f"{friendly_error(str(exc), self.language)}\n\nDetails: {exc}",
+            )
+            return
+        self.append_log(
+            "success",
+            "Preflight passed: "
+            f"{format_bytes(preflight['available_free_bytes'], self.language)} free; "
+            f"{format_bytes(preflight['required_free_bytes'], self.language)} required including safety margin.",
+        )
         self.last_result=None; self.report_button.setEnabled(False); self.progress_bar.setValue(0); self.progress_percent.setText("0%"); self.speed_label.setText("Preparing…" if self.language=="en" else "Подготовка…")
         self.chunks_label.setText(f"{self.t('chunks')}\n0 / reading header…"); self.size_label.setText(f"{self.t('size')}\n0 B / {format_bytes(expected_size,self.language)}"); self._set_status(I18N[self.language]["status_preparing"],"cyan")
         self.append_log("info",f"Input: {source}"); self.append_log("info",f"Output: {destination}"); self.append_log("info",f"Expected RAW size: {format_bytes(expected_size,self.language)}")

@@ -5,6 +5,8 @@ import os
 import struct
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 import zlib
 from pathlib import Path
 
@@ -266,6 +268,35 @@ class SparseToRawGuiTests(unittest.TestCase):
             worker.run()
             self.assertEqual(reports[0]["summary"]["failed"], 2)
             self.assertFalse((output / "same_raw.img").exists())
+
+
+    def test_batch_worker_preflight_failure_prevents_partial_conversion(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "queued.sparse"
+            raw = b"DATA"
+            header = SPARSE_HEADER.pack(
+                SPARSE_MAGIC, 1, 0, SPARSE_HEADER.size, 12, 4, 1, 1, zlib.crc32(raw) & 0xFFFFFFFF
+            )
+            source.write_bytes(header + struct.pack("<HHII", 0xCAC1, 0, 1, 16) + raw)
+            output = root / "out"
+            output.mkdir()
+            worker = BatchWorkerObject([source], output, False)
+            reports: list[dict] = []
+            worker.finished_report.connect(reports.append)
+
+            with patch(
+                "sparse_to_raw.shutil.disk_usage",
+                return_value=SimpleNamespace(total=1, used=1, free=0),
+            ):
+                worker.run()
+
+            self.assertEqual(reports[0]["summary"]["success"], 0)
+            self.assertEqual(reports[0]["summary"]["failed"], 1)
+            self.assertIsNone(reports[0]["preflight"])
+            self.assertFalse((output / "queued_raw.img").exists())
+            self.assertIn("Insufficient free disk space", reports[0]["items"][0]["error"])
+
 
     def test_bundled_self_test_entrypoint(self) -> None:
         # Reuse the existing QApplication so a GUI package can be smoke-tested headlessly.

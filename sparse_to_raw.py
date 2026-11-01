@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import struct
 import sys
 import tempfile
@@ -41,6 +42,10 @@ class SparseImageError(ValueError):
 
 class ConversionCancelled(Exception):
     """Raised when a caller safely cancels an operation before commit."""
+
+
+class InsufficientDiskSpaceError(OSError):
+    """Raised when preflight estimates that an operation will not fit."""
 
 
 ProgressCallback = Callable[[dict[str, Any]], None]
@@ -229,7 +234,17 @@ def _process_sparse(
             last_percent = percent
             last_progress_time = now
 
+    preflight_report: dict[str, Any] | None = None
     try:
+        if destination is not None:
+            preflight_report = preflight_output([source], destination, operation="convert", force=force)
+            if show_progress:
+                print(
+                    "Preflight: "
+                    f"{_format_size(preflight_report['available_free_bytes'])} free; "
+                    f"{_format_size(preflight_report['required_free_bytes'])} required including safety margin.",
+                    file=sys.stderr,
+                )
         with source.open("rb") as input_stream:
             header_bytes = _read_exact(input_stream, HEADER_SIZE, "sparse header")
             (
@@ -454,6 +469,8 @@ def _process_sparse(
                 "crc32": running_crc,
                 "chunks": total_chunks,
             }
+            if preflight_report is not None:
+                result["preflight"] = preflight_report
             if sha256 is not None:
                 result["sha256"] = sha256.hexdigest()
             if destination is not None:
@@ -600,6 +617,231 @@ def _read_sparse_part_header(input_path: str | Path) -> dict[str, int]:
 def _read_declared_raw_size(input_path: str | Path) -> int:
     """Read only enough of a sparse header to estimate the expanded size."""
     return _read_sparse_part_header(input_path)["raw_size_bytes"]
+
+
+PREFLIGHT_MIN_MARGIN_BYTES = 1 * 1024 * 1024
+PREFLIGHT_MAX_MARGIN_BYTES = 64 * 1024 * 1024
+
+
+def _preflight_safety_margin(expected_output_bytes: int) -> int:
+    """Reserve a modest safety margin for filesystem metadata and reporting."""
+    proportional = max(0, expected_output_bytes // 100)
+    return max(
+        PREFLIGHT_MIN_MARGIN_BYTES,
+        min(PREFLIGHT_MAX_MARGIN_BYTES, proportional),
+    )
+
+
+def _probe_writable_directory(directory: Path) -> None:
+    """Create, write, sync and remove a tiny temporary file in ``directory``."""
+    fd: int | None = None
+    probe_path: Path | None = None
+    try:
+        fd, name = tempfile.mkstemp(prefix=".sparse-to-raw-preflight-", suffix=".tmp", dir=directory)
+        probe_path = Path(name)
+        with os.fdopen(fd, "wb") as stream:
+            fd = None
+            stream.write(b"preflight\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+    except OSError as exc:
+        raise PermissionError(
+            f"Cannot create a temporary file in the output directory {directory}: {exc}"
+        ) from exc
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if probe_path is not None:
+            try:
+                probe_path.unlink(missing_ok=True)
+            except OSError as exc:
+                raise PermissionError(
+                    f"Cannot remove the preflight test file {probe_path}: {exc}"
+                ) from exc
+
+
+def _assess_output_space(
+    directory: Path,
+    *,
+    operation: str,
+    outputs: list[dict[str, Any]],
+    expected_output_bytes: int,
+    peak_additional_bytes: int,
+) -> dict[str, Any]:
+    """Validate write access and available bytes before starting disk-heavy work."""
+    try:
+        available = shutil.disk_usage(directory).free
+    except OSError as exc:
+        raise OSError(f"Cannot determine free disk space for {directory}: {exc}") from exc
+
+    margin = _preflight_safety_margin(expected_output_bytes)
+    required = peak_additional_bytes + margin
+    if available < required:
+        raise InsufficientDiskSpaceError(
+            "Insufficient free disk space for this operation: "
+            f"available {_format_size(available)}, estimated required {_format_size(required)} "
+            f"(peak new data {_format_size(peak_additional_bytes)} plus safety margin {_format_size(margin)}). "
+            "Choose another output drive or free up disk space before retrying."
+        )
+
+    _probe_writable_directory(directory)
+
+    return {
+        "passed": True,
+        "operation": operation,
+        "output_directory": str(directory),
+        "outputs": outputs,
+        "expected_output_bytes": expected_output_bytes,
+        "peak_additional_bytes": peak_additional_bytes,
+        "safety_margin_bytes": margin,
+        "required_free_bytes": required,
+        "available_free_bytes": available,
+        "estimated_remaining_free_bytes": available - peak_additional_bytes,
+        "write_probe": "passed",
+    }
+
+
+def preflight_output(
+    input_paths: list[str | Path],
+    output_path: str | Path,
+    *,
+    operation: str = "convert",
+    force: bool = False,
+) -> dict[str, Any]:
+    """Preflight one conversion or a merge before creating output data.
+
+    Conversion reserves one expanded RAW file. Merge reserves the final staged
+    RAW plus the largest per-part RAW staging file, because those coexist while
+    a merge is in progress. Estimates deliberately use logical RAW sizes and are
+    conservative for filesystems that can represent DONT_CARE ranges as holes.
+    """
+    if operation not in {"convert", "merge"}:
+        raise ValueError("operation must be 'convert' or 'merge'")
+    if not input_paths:
+        raise ValueError("At least one input Sparse file is required for preflight")
+    if operation == "convert" and len(input_paths) != 1:
+        raise ValueError("A conversion preflight requires exactly one input file")
+    if operation == "merge" and len(input_paths) < 2:
+        raise ValueError("A merge preflight requires at least two input parts")
+
+    sources = [Path(item).expanduser().resolve() for item in input_paths]
+    if len(set(sources)) != len(sources):
+        raise ValueError("The same input file was specified more than once")
+    for source in sources:
+        if not source.is_file():
+            raise FileNotFoundError(f"Input file not found: {source}")
+
+    destination = Path(output_path).expanduser().resolve()
+    if destination in sources:
+        raise ValueError("Output path must be different from every input file")
+    if not destination.parent.is_dir():
+        raise FileNotFoundError(f"Output directory not found: {destination.parent}")
+    if destination.exists() and destination.is_dir():
+        raise IsADirectoryError(f"Output path points to a directory: {destination}")
+    if destination.exists() and not force:
+        raise FileExistsError(
+            f"Output file already exists: {destination} (use --force to overwrite)"
+        )
+    if destination.exists():
+        try:
+            if any(os.path.samefile(source, destination) for source in sources):
+                raise ValueError("Output path refers to one of the input files")
+        except OSError:
+            pass
+
+    part_sizes = [_read_declared_raw_size(source) for source in sources]
+    expected_output = sum(part_sizes)
+    # For a merge, the combined stage and one expanded part coexist. For a
+    # single conversion the one output staging file is the peak allocation.
+    peak_additional = expected_output + (max(part_sizes) if operation == "merge" else 0)
+    output_entry = {
+        "path": str(destination),
+        "expected_size_bytes": expected_output,
+    }
+    report = _assess_output_space(
+        destination.parent,
+        operation=operation,
+        outputs=[output_entry],
+        expected_output_bytes=expected_output,
+        peak_additional_bytes=peak_additional,
+    )
+    report.update({
+        "inputs": [str(source) for source in sources],
+        "output": str(destination),
+        "part_raw_sizes_bytes": part_sizes,
+    })
+    return report
+
+
+def preflight_batch(
+    input_paths: list[str | Path],
+    output_directory: str | Path,
+    *,
+    overwrite: bool = False,
+) -> dict[str, Any]:
+    """Preflight every output in a sequential batch to avoid partial queues.
+
+    Output names match the GUI queue convention: ``<input-stem>_raw.img``.
+    The complete set is checked for path collisions and existing destinations
+    before any item is converted.
+    """
+    if not input_paths:
+        raise ValueError("Add at least one input Sparse file to the batch")
+    output_dir = Path(output_directory).expanduser().resolve()
+    if not output_dir.exists():
+        raise FileNotFoundError(f"Output directory not found: {output_dir}")
+    if not output_dir.is_dir():
+        raise NotADirectoryError(f"Not an output directory: {output_dir}")
+
+    sources = [Path(item).expanduser().resolve() for item in input_paths]
+    source_set = set(sources)
+    outputs: list[dict[str, Any]] = []
+    seen_destinations: dict[str, Path] = {}
+    total_size = 0
+    for source in sources:
+        if not source.is_file():
+            raise FileNotFoundError(f"Input file not found: {source}")
+        destination = (output_dir / f"{source.stem}_raw.img").resolve()
+        key = os.path.normcase(str(destination)).casefold()
+        if key in seen_destinations:
+            raise ValueError(
+                "Batch output-name collision: multiple input files map to "
+                f"{destination}. Use different file names or output folders."
+            )
+        seen_destinations[key] = source
+        if destination in source_set:
+            raise ValueError(
+                f"Batch output path would overwrite an input file in the same queue: {destination}. "
+                "Choose another output folder or remove the conflicting input."
+            )
+        if destination.exists() and destination.is_dir():
+            raise IsADirectoryError(f"Batch output path points to a directory: {destination}")
+        if destination.exists() and not overwrite:
+            raise FileExistsError(
+                f"Batch output already exists: {destination} (enable overwrite to replace it)"
+            )
+        raw_size = _read_declared_raw_size(source)
+        total_size += raw_size
+        outputs.append({
+            "input": str(source),
+            "output": str(destination),
+            "expected_size_bytes": raw_size,
+        })
+
+    report = _assess_output_space(
+        output_dir,
+        operation="batch",
+        outputs=outputs,
+        expected_output_bytes=total_size,
+        # Each output is committed before the next item starts, so the total
+        # size of all final outputs is the maximum additional allocation.
+        peak_additional_bytes=total_size,
+    )
+    report.update({"inputs": [str(source) for source in sources], "output_directory": str(output_dir)})
+    return report
 
 
 def discover_sparse_parts(directory: str | Path) -> dict[str, Any]:
@@ -755,6 +997,8 @@ def merge_sparse_to_raw(
             f"Output file already exists: {destination} (use --force to overwrite)"
         )
 
+    preflight_report = preflight_output(sources, destination, operation="merge", force=force)
+
     # Header sizes give us a progress denominator; the converter below still fully
     # validates every part before its raw bytes are appended to the staging file.
     declared_sizes = [_read_declared_raw_size(source) for source in sources]
@@ -837,6 +1081,13 @@ def merge_sparse_to_raw(
             last_percent = percent
             last_update = now
 
+    if show_progress:
+        print(
+            "Preflight: "
+            f"{_format_size(preflight_report['available_free_bytes'])} free; "
+            f"{_format_size(preflight_report['required_free_bytes'])} required including merge staging and safety margin.",
+            file=sys.stderr,
+        )
     notify("info", f"Merging {len(sources)} independent Sparse parts in the supplied order.")
     emit_progress(force_update=True)
 
@@ -962,6 +1213,7 @@ def merge_sparse_to_raw(
             "raw_size": expected_size,
             "crc32": running_crc & 0xFFFFFFFF,
             "chunks": total_chunks,
+            "preflight": preflight_report,
         }
         if sha256 is not None:
             result["sha256"] = sha256.hexdigest()
@@ -1001,6 +1253,13 @@ def print_summary(result: dict[str, Any], *, verbose: bool) -> None:
         print(f"RAW SHA-256      : {result['sha256']}")
     if result.get("output"):
         print(f"Output           : {result['output']}")
+    preflight = result.get("preflight")
+    if preflight:
+        print(
+            "Preflight space  : "
+            f"{_format_size(preflight['available_free_bytes'])} free / "
+            f"{_format_size(preflight['required_free_bytes'])} required"
+        )
     print("Validation successful.")
 
 
