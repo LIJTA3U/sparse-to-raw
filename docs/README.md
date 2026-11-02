@@ -13,4 +13,6 @@ Common pages:
 - [Проверка выходного RAW (RU)](ru/output-verification.md)
 - [Advanced task queue (EN)](en/task-queue.md)
 - [Расширенная очередь заданий (RU)](ru/task-queue.md)
+- [Diagnostic Center (EN)](en/diagnostic-center.md)
+- [Центр диагностики (RU)](ru/diagnostic-center.md)
 - [Screenshots / Скриншоты](screenshots/)

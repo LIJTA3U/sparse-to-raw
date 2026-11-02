@@ -6,7 +6,10 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - Interactive batch queue controls: drag reordering, task-level cancel/skip, pause/resume between files, retry selected failures, and status filters.
-- Queue progress and JSON summaries now include waiting/running/success/failed/cancelled/skipped task states.
+- Queue progress and JSON summaries include waiting/running/success/failed/cancelled/skipped task states.
+- Local rotating JSONL diagnostic history with severity/operation/date filters and text search.
+- Diagnostic Center ZIP export with runtime-version information and redaction of user-profile paths and credential-shaped values.
+- Operation metrics for completed conversion, inspection, merge, and batch tasks: duration, processed/output bytes, chunk count, and average throughput where available.
 - GUI discovery of independent Sparse part groups with numeric ordering and validation of gaps, duplicate indices, headers, and block sizes.
 - Shared preflight checks for output paths, write access, free disk space, merge staging needs, and batch output collisions.
 - Optional RAW read-back verification: verify staged output size and SHA-256 against expected logical contents before atomic commit.
@@ -19,8 +22,6 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.4.0] — released
 
 ### Added
-- Interactive batch queue controls: drag reordering, task-level cancel/skip, pause/resume between files, retry selected failures, and status filters.
-- Queue progress and JSON summaries now include waiting/running/success/failed/cancelled/skipped task states.
 - Russian/English GUI language switching with saved preference.
 - Decimal MB/s, binary MiB/s, and Mbit/s speed display options.
 - Application icon and larger action icons.
@@ -39,8 +40,6 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.3.0] — released
 
 ### Added
-- Interactive batch queue controls: drag reordering, task-level cancel/skip, pause/resume between files, retry selected failures, and status filters.
-- Queue progress and JSON summaries now include waiting/running/success/failed/cancelled/skipped task states.
 - Experimental PySide6 desktop GUI with a frameless geometric window.
 - Progress based on processed bytes and completed chunks, operation log, and SHA-256.
 - Background worker thread and safe cancellation through staging-file removal.
@@ -53,8 +52,6 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.2.0] — released
 
 ### Added
-- Interactive batch queue controls: drag reordering, task-level cancel/skip, pause/resume between files, retry selected failures, and status filters.
-- Queue progress and JSON summaries now include waiting/running/success/failed/cancelled/skipped task states.
 - `--info` mode for metadata and verification without creating RAW output.
 - `--verify-only` mode for separate structure/checksum validation.
 - Protection against accidental overwrite; `--force` enables explicit replacement.

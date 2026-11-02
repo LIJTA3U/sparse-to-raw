@@ -10,20 +10,26 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import tempfile
+import zipfile
 import threading
 import traceback
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, QSize, QSettings, Qt, QThread, Signal, Slot
+from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, QSize, QSettings, QStandardPaths, Qt, QThread, Signal, Slot, qVersion
 from PySide6.QtGui import (
     QBrush, QColor, QFont, QIcon, QLinearGradient, QPainter, QPainterPath,
     QPen, QRegion, QTextCharFormat, QTextCursor,
 )
 from PySide6.QtCore import QUrl
+import PySide6
+
+from diagnostics import DiagnosticStore, default_diagnostics_directory
+
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
@@ -43,7 +49,7 @@ from sparse_to_raw import (
     preflight_output,
 )
 
-APP_VERSION = "v0.4.0"
+APP_VERSION = "v0.5.0-dev"
 ORG_NAME = "LIJTA3U"
 APP_NAME = "sparse-to-raw"
 MAX_RECENT = 12
@@ -120,6 +126,41 @@ I18N: dict[str, dict[str, str]] = {
         "verify_output_tooltip": "Повторно прочитать временный RAW и сравнить размер и SHA-256 с ожидаемым логическим содержимым. Увеличивает объём чтения с диска.",
         "verify_progress": "Проверка записанного RAW",
         "verify_passed": "Проверка записанного RAW пройдена",
+        "diagnostics_button": "Диагностика",
+        "diagnostics_title": "Центр диагностики",
+        "diagnostics_filter_level": "Уровень",
+        "diagnostics_filter_category": "Операция",
+        "diagnostics_filter_period": "Период",
+        "diagnostics_search": "Поиск по журналу…",
+        "diagnostics_all": "Все",
+        "diagnostics_level_debug": "Отладка",
+        "diagnostics_level_info": "Информация",
+        "diagnostics_level_success": "Успех",
+        "diagnostics_level_warning": "Предупреждение",
+        "diagnostics_level_error": "Ошибка",
+        "diagnostics_cat_application": "Приложение",
+        "diagnostics_cat_conversion": "Конвертация",
+        "diagnostics_cat_analysis": "Анализ",
+        "diagnostics_cat_queue": "Очередь",
+        "diagnostics_cat_merge": "Объединение",
+        "diagnostics_cat_preflight": "Предварительная проверка",
+        "diagnostics_cat_verification": "Проверка RAW",
+        "diagnostics_cat_diagnostics": "Диагностика",
+        "diagnostics_period_today": "Сегодня",
+        "diagnostics_period_week": "Последние 7 дней",
+        "diagnostics_time": "Время",
+        "diagnostics_level": "Уровень",
+        "diagnostics_category": "Операция",
+        "diagnostics_message": "Событие",
+        "diagnostics_count": "Событий: {count}",
+        "diagnostics_export": "Экспорт ZIP…",
+        "diagnostics_clear": "Очистить историю…",
+        "diagnostics_close": "Закрыть",
+        "diagnostics_empty": "Нет событий, соответствующих фильтрам.",
+        "diagnostics_exported": "Диагностический архив сохранён:",
+        "diagnostics_export_failed": "Не удалось создать диагностический архив:",
+        "diagnostics_clear_confirm": "Удалить локальную историю диагностики? Это действие нельзя отменить.",
+        "diagnostics_privacy": "Экспорт содержит обезличенный журнал и базовые версии среды. Исходные Sparse/RAW-файлы, списки недавних файлов, переменные окружения, имя пользователя и имя компьютера не включаются. Пути профиля и похожие на секреты значения маскируются.",
     },
     "en": {
         "window_title": "sparse-to-raw", "main_heading": "Image conversion",
@@ -185,6 +226,41 @@ I18N: dict[str, dict[str, str]] = {
         "verify_output_tooltip": "Re-read the staged RAW file and compare its size and SHA-256 with the expected logical contents. This adds disk I/O.",
         "verify_progress": "Verifying written RAW output",
         "verify_passed": "Written RAW verification passed",
+        "diagnostics_button": "Diagnostics",
+        "diagnostics_title": "Diagnostic Center",
+        "diagnostics_filter_level": "Level",
+        "diagnostics_filter_category": "Operation",
+        "diagnostics_filter_period": "Period",
+        "diagnostics_search": "Search events…",
+        "diagnostics_all": "All",
+        "diagnostics_level_debug": "Debug",
+        "diagnostics_level_info": "Info",
+        "diagnostics_level_success": "Success",
+        "diagnostics_level_warning": "Warning",
+        "diagnostics_level_error": "Error",
+        "diagnostics_cat_application": "Application",
+        "diagnostics_cat_conversion": "Conversion",
+        "diagnostics_cat_analysis": "Analysis",
+        "diagnostics_cat_queue": "Queue",
+        "diagnostics_cat_merge": "Merge",
+        "diagnostics_cat_preflight": "Preflight",
+        "diagnostics_cat_verification": "RAW verification",
+        "diagnostics_cat_diagnostics": "Diagnostics",
+        "diagnostics_period_today": "Today",
+        "diagnostics_period_week": "Last 7 days",
+        "diagnostics_time": "Time",
+        "diagnostics_level": "Level",
+        "diagnostics_category": "Operation",
+        "diagnostics_message": "Event",
+        "diagnostics_count": "Events: {count}",
+        "diagnostics_export": "Export ZIP…",
+        "diagnostics_clear": "Clear history…",
+        "diagnostics_close": "Close",
+        "diagnostics_empty": "No events match the selected filters.",
+        "diagnostics_exported": "Diagnostic archive saved:",
+        "diagnostics_export_failed": "Could not create diagnostic archive:",
+        "diagnostics_clear_confirm": "Delete the local diagnostic history? This cannot be undone.",
+        "diagnostics_privacy": "The export contains a sanitized event log and basic runtime versions. Sparse/RAW input files, recent-file lists, environment variables, account names, and computer names are not included. User profile paths and credential-shaped values are redacted.",
     },
 }
 
@@ -411,6 +487,7 @@ class ConversionWorkerObject(QObject):
         self.verify_output = bool(verify_output); self._cancel_event = threading.Event()
     @Slot()
     def run(self) -> None:
+        started_at = time.perf_counter()
         try:
             kwargs = {"progress_callback": self.progress.emit, "event_callback": self.log.emit,
                       "cancel_requested": self._cancel_event.is_set, "calculate_sha256": True}
@@ -434,7 +511,18 @@ class ConversionWorkerObject(QObject):
         except ConversionCancelled: self.cancelled.emit()
         except Exception as exc:
             self.log.emit("error", f"{type(exc).__name__}: {exc}\n\n{traceback.format_exc()}"); self.failed.emit(str(exc))
-        else: self.succeeded.emit(result)
+        else:
+            elapsed = max(time.perf_counter() - started_at, 0.0)
+            processed_bytes = int(result.get("raw_size_bytes", result.get("output_size_bytes", 0)) or 0)
+            result["operation_metrics"] = {
+                "operation": self.operation,
+                "duration_seconds": round(elapsed, 6),
+                "processed_bytes": processed_bytes,
+                "output_bytes": int(result.get("output_size_bytes", 0) or 0),
+                "chunks": int(result.get("total_chunks", 0) or 0),
+                "average_bytes_per_second": round(processed_bytes / elapsed, 2) if elapsed > 0 else 0.0,
+            }
+            self.succeeded.emit(result)
         finally: self.finished.emit()
     def request_cancel(self) -> None: self._cancel_event.set()
 
@@ -612,6 +700,7 @@ class BatchWorkerObject(QObject):
                         self._current_task_id = task_id
                         self._current_task_cancel = task_cancel
                     self.item_started.emit(task_id)
+                    task_started_at = time.perf_counter()
                     try:
                         if index in collision_indices:
                             raise ValueError(
@@ -657,6 +746,18 @@ class BatchWorkerObject(QObject):
                     except Exception as exc:
                         row.update({"status": "failed", "error": f"{type(exc).__name__}: {exc}"})
                         self.log.emit("error", f"[{index+1}/{total}] Failed: {source}\n{type(exc).__name__}: {exc}")
+                    elapsed = max(time.perf_counter() - task_started_at, 0.0)
+                    result_metrics = row.get("result", {}).get("operation_metrics", {}) if isinstance(row.get("result"), dict) else {}
+                    successful_result = row.get("result", {}) if isinstance(row.get("result"), dict) else {}
+                    processed_bytes = int(result_metrics.get("processed_bytes", successful_result.get("raw_size_bytes", 0)) or 0)
+                    row["operation_metrics"] = {
+                        "operation": "batch-convert",
+                        "duration_seconds": round(elapsed, 6),
+                        "processed_bytes": processed_bytes,
+                        "output_bytes": int(result_metrics.get("output_bytes", successful_result.get("output_size_bytes", 0)) or 0),
+                        "chunks": int(result_metrics.get("chunks", successful_result.get("total_chunks", 0)) or 0),
+                        "average_bytes_per_second": round(processed_bytes / elapsed, 2) if elapsed > 0 else 0.0,
+                    }
                     self._emit_item_finished(index, source, row, rows)
 
                     if self._cancel_event.is_set():
@@ -740,12 +841,16 @@ class AnalysisDialog(QDialog):
         worker.log.connect(self._log); worker.progress.connect(lambda d: self.progress.setValue(int(d.get("percent",0))))
         worker.succeeded.connect(self._success); worker.failed.connect(self._failure)
         thread = connect_worker(worker, self, self._thread_finished); self.thread = thread; thread.start()
-    def _log(self, level: str, message: str) -> None: self.output.append(f"[{level.upper()}] {message}")
+    def _log(self, level: str, message: str) -> None:
+        self.output.append(f"[{level.upper()}] {message}")
+        self.main.append_log(level, message, category="analysis")
     def _success(self, result: dict) -> None:
         self.result = result; self.progress.setValue(100); self.save_button.setEnabled(True)
+        self.main.record_operation_metrics("analysis", "success", result.get("operation_metrics", {}), source=Path(str(result.get("input", "image"))).name)
         self.output.append("\n" + json.dumps(result, ensure_ascii=False, indent=2))
     def _failure(self, message: str) -> None:
         self.output.append(f"\n{self.main.t('status_error')}: {friendly_error(message, self.main.language)}\nDetails: {message}")
+        self.main.append_log("error", f"Analysis failed: {message}", category="analysis")
     def _thread_finished(self) -> None:
         self.thread = None; self.worker = None; self.analyze_button.setEnabled(True)
         if self._close_when_finished: self.close()
@@ -1251,7 +1356,7 @@ class BatchQueueDialog(QDialog):
 
     def _log(self, level: str, message: str) -> None:
         self.log_view.append(f"[{level.upper()}] {message}")
-        self.main.append_log(level, message)
+        self.main.append_log(level, message, category="queue")
 
     def _item_started(self, task_id: str) -> None:
         self._set_item_status(task_id, "running")
@@ -1267,7 +1372,9 @@ class BatchQueueDialog(QDialog):
 
     def _item_finished(self, index: int, row: dict) -> None:
         task_id = str(row.get("task_id", self._run_task_ids[index] if index < len(self._run_task_ids) else ""))
-        self._set_item_status(task_id, str(row.get("status", "failed")), str(row.get("error", "")))
+        status = str(row.get("status", "failed"))
+        self._set_item_status(task_id, status, str(row.get("error", "")))
+        self.main.record_operation_metrics("queue", status, row.get("operation_metrics", {}), source=Path(str(row.get("input", ""))).name, error=str(row.get("error", "")))
         self._run_finished_count += 1
         total = max(1, len(self._run_task_ids))
         self.progress.setValue(min(100, int(self._run_finished_count * 100 / total)))
@@ -1531,9 +1638,10 @@ class MergeDialog(QDialog):
         worker.progress.connect(lambda d:self.progress.setValue(int(d.get("percent",0))))
         worker.log.connect(self._log); worker.succeeded.connect(self._success); worker.failed.connect(self._failure); worker.cancelled.connect(lambda:self._log("warning","Merge cancelled; staged output discarded."))
         thread=connect_worker(worker,self,self._thread_finished); self.thread=thread; thread.start()
-    def _log(self, level: str, message: str) -> None: self.log_view.append(f"[{level.upper()}] {message}"); self.main.append_log(level,message)
+    def _log(self, level: str, message: str) -> None: self.log_view.append(f"[{level.upper()}] {message}"); self.main.append_log(level,message,category="merge")
     def _success(self,result:dict) -> None:
         self.result=result; self.progress.setValue(100); self.save_report.setEnabled(True); self.log_view.append("\n"+json.dumps(result,ensure_ascii=False,indent=2))
+        self.main.record_operation_metrics("merge", "success", result.get("operation_metrics", {}), source=Path(str(result.get("output", "merge"))).name)
     def _failure(self,message:str) -> None:
         self._log("error",message)
         friendly = friendly_error(message, self.main.language)
@@ -1560,9 +1668,184 @@ class MergeDialog(QDialog):
             except OSError as exc: QMessageBox.critical(self,"Error",str(exc))
 
 
+class DiagnosticCenterDialog(QDialog):
+    """Searchable diagnostic history with privacy-conscious ZIP export."""
+    LEVELS = ("debug", "info", "success", "warning", "error")
+    CATEGORIES = ("application", "conversion", "analysis", "queue", "merge", "preflight", "verification", "diagnostics")
+
+    def __init__(self, parent: "MainWindow") -> None:
+        super().__init__(parent)
+        self.main = parent
+        self.setWindowTitle(parent.t("diagnostics_title"))
+        self.resize(1080, 680)
+        self.setModal(False)
+        root = QVBoxLayout(self)
+        filters = QHBoxLayout()
+        self.level_combo = QComboBox()
+        self.level_combo.addItem(parent.t("diagnostics_all"), "all")
+        for level in self.LEVELS:
+            self.level_combo.addItem(parent.t(f"diagnostics_level_{level}"), level)
+        self.category_combo = QComboBox()
+        self.category_combo.addItem(parent.t("diagnostics_all"), "all")
+        for category in self.CATEGORIES:
+            self.category_combo.addItem(parent.t(f"diagnostics_cat_{category}"), category)
+        self.period_combo = QComboBox()
+        self.period_combo.addItem(parent.t("diagnostics_all"), "all")
+        self.period_combo.addItem(parent.t("diagnostics_period_today"), "today")
+        self.period_combo.addItem(parent.t("diagnostics_period_week"), "7d")
+        for label, control in (("diagnostics_filter_level", self.level_combo), ("diagnostics_filter_category", self.category_combo), ("diagnostics_filter_period", self.period_combo)):
+            filters.addWidget(QLabel(parent.t(label)))
+            filters.addWidget(control)
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText(parent.t("diagnostics_search"))
+        filters.addWidget(self.search_edit, 1)
+        root.addLayout(filters)
+
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels([parent.t("diagnostics_time"), parent.t("diagnostics_level"), parent.t("diagnostics_category"), parent.t("diagnostics_message")])
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setAlternatingRowColors(True)
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        root.addWidget(self.table, 1)
+        self.count_label = QLabel()
+        self.count_label.setStyleSheet(f"color:{COLORS['muted']};")
+        root.addWidget(self.count_label)
+        privacy = QLabel(parent.t("diagnostics_privacy"))
+        privacy.setWordWrap(True)
+        privacy.setStyleSheet(f"color:{COLORS['muted']};font-size:9pt;")
+        root.addWidget(privacy)
+
+        buttons = QHBoxLayout()
+        self.export_button = QPushButton(parent.t("diagnostics_export"))
+        self.clear_button = QPushButton(parent.t("diagnostics_clear"))
+        close_button = QPushButton(parent.t("diagnostics_close"))
+        self.export_button.clicked.connect(self._export)
+        self.clear_button.clicked.connect(self._clear)
+        close_button.clicked.connect(self.close)
+        buttons.addWidget(self.export_button)
+        buttons.addWidget(self.clear_button)
+        buttons.addStretch()
+        buttons.addWidget(close_button)
+        root.addLayout(buttons)
+        for control in (self.level_combo, self.category_combo, self.period_combo):
+            control.currentIndexChanged.connect(self.refresh)
+        self.search_edit.textChanged.connect(self.refresh)
+        self.setStyleSheet(
+            f"QDialog{{background:{COLORS['background']};color:{COLORS['text']}}} "
+            f"QTableWidget,QLineEdit,QComboBox{{background:#07111b;color:{COLORS['text']};border:1px solid #29434f;gridline-color:#203946}} "
+            f"QHeaderView::section{{background:#0d1c29;color:{COLORS['cyan']};padding:6px;border:1px solid #243a47}} "
+            f"QPushButton{{background:#0a1b27;color:{COLORS['cyan']};border:1px solid #24505e;padding:7px;border-radius:4px}}"
+        )
+        self.refresh()
+
+    def _filtered_events(self) -> list[dict[str, Any]]:
+        events = self.main.diagnostic_store.entries()
+        level = self.level_combo.currentData()
+        category = self.category_combo.currentData()
+        period = self.period_combo.currentData()
+        search = self.search_edit.text().strip().casefold()
+        now = datetime.now().astimezone()
+        filtered: list[dict[str, Any]] = []
+        for event in reversed(events):
+            if level != "all" and event.get("level") != level:
+                continue
+            if category != "all" and event.get("category") != category:
+                continue
+            if period != "all":
+                try:
+                    timestamp = datetime.fromisoformat(str(event.get("timestamp", "")))
+                    if timestamp.tzinfo is None:
+                        timestamp = timestamp.astimezone()
+                except ValueError:
+                    continue
+                if period == "today" and timestamp.date() != now.date():
+                    continue
+                if period == "7d" and timestamp < now - timedelta(days=7):
+                    continue
+            searchable = " ".join((str(event.get("message", "")), json.dumps(event.get("details", {}), ensure_ascii=False), str(event.get("category", "")), str(event.get("level", "")))).casefold()
+            if search and search not in searchable:
+                continue
+            filtered.append(event)
+        return filtered
+
+    def refresh(self, *_args) -> None:
+        events = self._filtered_events()
+        self.table.setRowCount(len(events))
+        level_colors = {"success": COLORS["green"], "error": COLORS["red"], "warning": COLORS["amber"], "info": COLORS["cyan"], "debug": COLORS["muted"]}
+        for row, event in enumerate(events):
+            values = (str(event.get("timestamp", "")), str(event.get("level", "")).upper(), str(event.get("category", "")), str(event.get("message", "")))
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setToolTip(value)
+                if column == 1:
+                    item.setForeground(QColor(level_colors.get(str(event.get("level", "")), COLORS["text"])))
+                if column == 3 and event.get("details"):
+                    item.setToolTip(value + "\n\n" + json.dumps(event["details"], ensure_ascii=False, indent=2))
+                self.table.setItem(row, column, item)
+        self.count_label.setText(self.main.t("diagnostics_count").format(count=len(events)))
+
+    def _export(self) -> None:
+        default_name = f"sparse-to-raw-diagnostics-{datetime.now():%Y%m%d-%H%M%S}.zip"
+        filename, _ = QFileDialog.getSaveFileName(self, self.main.t("diagnostics_export"), default_name, "ZIP archive (*.zip)")
+        if not filename:
+            return
+        target = Path(filename)
+        if target.suffix.casefold() != ".zip":
+            target = target.with_suffix(".zip")
+        try:
+            archive = self.main.diagnostic_store.export_zip(
+                target,
+                app_version=APP_VERSION,
+                qt_version=qVersion(),
+                pyside_version=getattr(PySide6, "__version__", "unavailable"),
+            )
+        except (OSError, zipfile.BadZipFile, RuntimeError) as exc:
+            QMessageBox.critical(self, self.main.t("diagnostics_title"), f"{self.main.t('diagnostics_export_failed')}\n{exc}")
+            self.main.append_log("error", f"Diagnostic ZIP export failed: {type(exc).__name__}: {exc}", category="diagnostics")
+            return
+        self.main.append_log("success", f"Diagnostic ZIP exported: {archive.name}", category="diagnostics", details={"archive_name": archive.name})
+        self.refresh()
+        QMessageBox.information(self, self.main.t("diagnostics_title"), f"{self.main.t('diagnostics_exported')}\n{archive}")
+
+    def _clear(self) -> None:
+        answer = QMessageBox.question(
+            self, self.main.t("diagnostics_title"), self.main.t("diagnostics_clear_confirm"),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        if not self.main.diagnostic_store.clear():
+            QMessageBox.warning(self, self.main.t("diagnostics_title"), self.main.diagnostic_store.last_error or "Could not clear diagnostic history.")
+            return
+        self.main.log_view.clear()
+        self.main.append_log("info", "Diagnostic history cleared.", category="diagnostics")
+        self.refresh()
+
+
 class MainWindow(QWidget):
     def __init__(self) -> None:
         super().__init__()
+        app = QApplication.instance()
+        if app is not None:
+            app.setOrganizationName(ORG_NAME)
+            app.setApplicationName(APP_NAME)
+            app.setApplicationVersion(APP_VERSION)
+        diagnostics_override = os.environ.get("SPARSE_TO_RAW_DIAGNOSTICS_DIR", "").strip()
+        app_data = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
+        if diagnostics_override:
+            diagnostics_directory = Path(diagnostics_override).expanduser()
+        else:
+            if not app_data:
+                app_data = str(Path.home() / ".local" / "share" / APP_NAME)
+            diagnostics_directory = default_diagnostics_directory(app_data)
+        self.diagnostic_store = DiagnosticStore(diagnostics_directory)
         self.settings = QSettings(ORG_NAME, APP_NAME)
         self.language = str(self.settings.value("language", "ru"))
         if self.language not in I18N: self.language = "ru"
@@ -1597,6 +1880,7 @@ class MainWindow(QWidget):
         self.queue_button=QPushButton(); self.queue_button.setIcon(self.icon_for("SP_FileDialogListView")); self.queue_button.setIconSize(QSize(24,24)); self.queue_button.clicked.connect(self._open_queue); toolbar.addWidget(self.queue_button)
         self.merge_button=QPushButton(); self.merge_button.setIcon(self.icon_for("SP_DirLinkIcon")); self.merge_button.setIconSize(QSize(24,24)); self.merge_button.clicked.connect(self._open_merge); toolbar.addWidget(self.merge_button)
         self.report_button=QPushButton(); self.report_button.setIcon(self.icon_for("SP_DialogSaveButton")); self.report_button.setIconSize(QSize(24,24)); self.report_button.clicked.connect(self._save_last_report); self.report_button.setEnabled(False); toolbar.addWidget(self.report_button)
+        self.diagnostics_button=QPushButton(); self.diagnostics_button.setIcon(self.icon_for("SP_MessageBoxInformation")); self.diagnostics_button.setIconSize(QSize(24,24)); self.diagnostics_button.clicked.connect(self._open_diagnostics); toolbar.addWidget(self.diagnostics_button)
         toolbar.addSpacing(8); self.recent_label=QLabel(); toolbar.addWidget(self.recent_label)
         self.recent_combo=QComboBox(); self.recent_combo.setMinimumWidth(140); self.recent_combo.setMaximumWidth(340); self.recent_combo.currentIndexChanged.connect(self._recent_selected); toolbar.addWidget(self.recent_combo,1)
         self.language_label=QLabel(); toolbar.addWidget(self.language_label)
@@ -1679,7 +1963,7 @@ class MainWindow(QWidget):
         self.verify_output_check.setToolTip(d["verify_output_tooltip"])
         self.progress_title.setText(d["progress"]); self.stats_title.setText(d["stats"]); self.chunks_label.setText(f"{d['chunks']}\n0 / —"); self.size_label.setText(f"{d['size']}\n0 B / —")
         self.log_title.setText(d["log"]); self.clear_log_button.setText(d["clear_log"])
-        self.analyze_button.setText(d["analyze"]); self.queue_button.setText(d["queue"]); self.merge_button.setText(d["merge"]); self.report_button.setText(d["save_report"])
+        self.analyze_button.setText(d["analyze"]); self.queue_button.setText(d["queue"]); self.merge_button.setText(d["merge"]); self.report_button.setText(d["save_report"]); self.diagnostics_button.setText(d["diagnostics_button"])
         self.recent_label.setText(d["recent"]); self.language_label.setText(d["language"])
         self._rebuild_recents()
         current=self.language_combo.findData(self.language)
@@ -1762,17 +2046,59 @@ class MainWindow(QWidget):
         painter.setPen(QPen(QColor(33,217,239,70),1)); painter.drawLine(QPointF(70,h*.31),QPointF(46,h*.38)); painter.drawLine(QPointF(46,h*.38),QPointF(46,h*.49)); painter.drawLine(QPointF(w-52,h*.33),QPointF(w-36,h*.38)); painter.drawLine(QPointF(w-36,h*.38),QPointF(w-48,h*.52))
         painter.setPen(QPen(QColor(33,217,239,140),2)); painter.drawLine(QPointF(36,h*.47),QPointF(62,h*.47)); painter.drawLine(QPointF(w-60,h*.47),QPointF(w-38,h*.47))
 
-    def append_log(self,level:str,message:str) -> None:
-        timestamp=datetime.now().strftime("%H:%M:%S"); colors={"success":COLORS["green"],"error":COLORS["red"],"warning":COLORS["amber"],"info":COLORS["cyan"]}
-        # Keep detailed original exception text while translating familiar labels only.
-        replacements={"Проверка заголовка":"Header validation","Обработка чанков":"Processing chunks","Преобразование завершено успешно":"Conversion completed successfully","Открытие входного файла":"Opening input file","Проверка общей контрольной суммы":"Image checksum validation","Операция отменена пользователем":"Operation cancelled by user"}
-        if self.language=="en":
-            for ru,en in replacements.items(): message=message.replace(ru,en)
-        cursor=self.log_view.textCursor(); cursor.movePosition(QTextCursor.MoveOperation.End)
-        dot=QTextCharFormat(); dot.setForeground(QColor(colors.get(level,COLORS["text"])))
-        timefmt=QTextCharFormat(); timefmt.setForeground(QColor(COLORS["muted"]))
-        msgfmt=QTextCharFormat(); msgfmt.setForeground(QColor(COLORS["text"]))
-        cursor.insertText("● ",dot); cursor.insertText(f"[{timestamp}] ",timefmt); cursor.insertText(str(message),msgfmt); cursor.insertText("\n"); self.log_view.setTextCursor(cursor); self.log_view.ensureCursorVisible()
+    def _infer_log_category(self, message: str) -> str:
+        text = str(message).casefold()
+        if "preflight" in text or "предварительн" in text:
+            return "preflight"
+        if "verify" in text or "verification" in text or "провер" in text and "raw" in text:
+            return "verification"
+        if "merge" in text or "объедин" in text:
+            return "merge"
+        if "queue" in text or "batch" in text or "очеред" in text or "пакетн" in text:
+            return "queue"
+        if "analysis" in text or "inspect" in text or "анализ" in text:
+            return "analysis"
+        if "convert" in text or "conversion" in text or "конверт" in text or "преобраз" in text:
+            return "conversion"
+        return "application"
+
+    def append_log(self, level: str, message: str, *, category: str | None = None, details: dict[str, Any] | None = None) -> None:
+        message = str(message)
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        colors = {"success": COLORS["green"], "error": COLORS["red"], "warning": COLORS["amber"], "info": COLORS["cyan"], "debug": COLORS["muted"]}
+        replacements = {"Проверка заголовка": "Header validation", "Обработка чанков": "Processing chunks", "Преобразование завершено успешно": "Conversion completed successfully", "Открытие входного файла": "Opening input file", "Проверка общей контрольной суммы": "Image checksum validation", "Операция отменена пользователем": "Operation cancelled by user"}
+        if self.language == "en":
+            for ru, en in replacements.items():
+                message = message.replace(ru, en)
+        resolved_category = category or self._infer_log_category(message)
+        self.diagnostic_store.append(level, resolved_category, message, details)
+        cursor = self.log_view.textCursor(); cursor.movePosition(QTextCursor.MoveOperation.End)
+        dot = QTextCharFormat(); dot.setForeground(QColor(colors.get(level, COLORS["text"])))
+        timefmt = QTextCharFormat(); timefmt.setForeground(QColor(COLORS["muted"]))
+        msgfmt = QTextCharFormat(); msgfmt.setForeground(QColor(COLORS["text"]))
+        cursor.insertText("● ", dot); cursor.insertText(f"[{timestamp}] ", timefmt); cursor.insertText(message, msgfmt); cursor.insertText("\n"); self.log_view.setTextCursor(cursor); self.log_view.ensureCursorVisible()
+
+    def record_operation_metrics(self, category: str, status: str, metrics: dict[str, Any] | None, *, source: str = "", error: str = "") -> None:
+        metrics = metrics or {}
+        duration = float(metrics.get("duration_seconds", 0.0) or 0.0)
+        processed = int(metrics.get("processed_bytes", 0) or 0)
+        output_bytes = int(metrics.get("output_bytes", 0) or 0)
+        chunks = int(metrics.get("chunks", 0) or 0)
+        speed = float(metrics.get("average_bytes_per_second", (processed / duration if duration > 0 else 0.0)) or 0.0)
+        details = {
+            "status": status,
+            "duration_seconds": round(max(duration, 0.0), 6),
+            "processed_bytes": max(processed, 0),
+            "output_bytes": max(output_bytes, 0),
+            "chunks": max(chunks, 0),
+            "average_bytes_per_second": round(max(speed, 0.0), 2),
+            "source_name": Path(source).name if source else "",
+        }
+        if error:
+            details["error"] = error[:2000]
+        level = "success" if status == "success" else "warning" if status in {"cancelled", "skipped"} else "error"
+        self.append_log(level, f"{category.title()} task {status}", category=category, details=details)
+
     def _clear_log(self) -> None: self.log_view.clear(); self.append_log("info","Log cleared." if self.language=="en" else "Журнал очищен.")
     def _browse_source(self) -> None:
         start=self.source_edit.text().strip(); start_dir=str(Path(start).expanduser().parent) if start and Path(start).exists() else str(Path.home())
@@ -1857,6 +2183,7 @@ class MainWindow(QWidget):
     @Slot(dict)
     def _on_success(self,result:dict) -> None:
         self.last_result=result; self.report_button.setEnabled(True); size=int(result.get("output_size_bytes",result.get("raw_size_bytes",0))); expected=int(result.get("raw_size_bytes",self._expected_size)); chunks=int(result.get("total_chunks",self._total_chunks))
+        self.record_operation_metrics("conversion", "success", result.get("operation_metrics", {}), source=Path(str(result.get("input", self.source_edit.text()))).name)
         old_speed = float(self._last_progress.get("speed_bytes_per_second", 0.0))
         self._last_progress = {"percent": 100, "processed_chunks": chunks, "total_chunks": chunks,
                                "processed_bytes": size, "expected_bytes": expected,
@@ -1906,6 +2233,11 @@ class MainWindow(QWidget):
                 break
         self._status_label=label; self._status_color=color_name
         color=COLORS.get(color_name,COLORS["muted"]); self.status_label.setText(f"{I18N[self.language]['status']}: {label}"); self.status_label.setStyleSheet(f"color:{color};font-family:Consolas;font-size:9pt")
+    def _open_diagnostics(self) -> None:
+        dialog = DiagnosticCenterDialog(self)
+        dialog.show()
+        self._keep_dialog(dialog)
+
     def _open_analysis(self) -> None:
         dialog=AnalysisDialog(self,self.source_edit.text().strip()); dialog.show(); self._keep_dialog(dialog)
     def _open_queue(self) -> None:

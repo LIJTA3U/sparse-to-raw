@@ -64,6 +64,9 @@ jobs:
       - name: Run core tests before packaging
         run: python -m unittest discover -s tests -p test_sparse_to_raw.py -v
 
+      - name: Run diagnostic tests before packaging
+        run: python -m unittest discover -s tests -p test_diagnostics.py -v
+
       - name: Run GUI smoke tests before packaging
         env:
           QT_QPA_PLATFORM: offscreen

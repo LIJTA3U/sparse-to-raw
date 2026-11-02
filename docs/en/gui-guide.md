@@ -39,9 +39,11 @@ For detailed queue controls, pause/cancel behavior, retries, and status filters,
 
 ## Reports and diagnostics
 
-The main window keeps a bounded operation log. Conversion, analysis, and merge results can be exported as JSON where the corresponding report action is available. Batch conversion writes its summary to the output folder.
+The main window keeps a bounded operation log. Open **Diagnostics** from the toolbar to browse the persistent event history, filter by severity, operation, and date, and search messages/details. The Diagnostic Center records operation duration, processed/output bytes, chunk counts, and average throughput where those metrics are available. Logs are locally stored with rotation.
 
-Review reports before sharing them: they may contain local file paths and diagnostic messages from the system.
+Use **Export ZIP** to create a sanitized troubleshooting bundle containing JSONL events and basic runtime-version information. Sparse/RAW files, conversion reports, recent-file lists, environment variables, account names, and computer names are not added. User profile roots and common credential-shaped values are redacted. Review the archive before sharing it, because useful file names or other context may remain. See [Diagnostic Center](diagnostic-center.md).
+
+Conversion, analysis, and merge results can still be exported as JSON where the corresponding report action is available. Batch conversion writes its summary to the output folder; these reports are separate from the diagnostic ZIP.
 
 ## Windows packages
 

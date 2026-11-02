@@ -24,7 +24,7 @@ A streaming Android Sparse Image v1 inspector and converter that expands Sparse 
 - Merge independent Sparse images in an explicitly supplied order (`--merge-parts`).
 - Stream large images without loading the complete input or output into memory.
 - Use only the Python standard library for the CLI.
-- Provide a PySide6 GUI with Russian/English language selection, saved preferences, recent files, image analysis, sequential batch conversion, visual ordered merging, optional output verification, and JSON reports.
+- Provide a PySide6 GUI with Russian/English language selection, saved preferences, recent files, image analysis, sequential batch conversion, visual ordered merging, optional output verification, a searchable Diagnostic Center, and JSON reports.
 
 `DONT_CARE` ranges are interpreted as zero bytes. The resulting logical RAW contents and size are correct; the filesystem may store zero ranges as sparse holes.
 
@@ -100,6 +100,7 @@ For all CLI options, examples, and exit behavior, see the [CLI guide](docs/en/cl
 - [RAW output verification](docs/en/output-verification.md)
 - [GUI guide](docs/en/gui-guide.md)
 - [Task queue guide](docs/en/task-queue.md)
+- [Diagnostic Center](docs/en/diagnostic-center.md)
 - [Development and packaging](docs/en/development.md)
 - [Changelog](docs/en/changelog.md)
 - [Contributing](docs/CONTRIBUTING.md)
@@ -110,7 +111,7 @@ The [Russian README](README.ru.md) links to the Russian documentation in `docs/r
 
 ## Current development
 
-The published v0.4.0 release remains available above. The `main` branch contains unreleased v0.5.0 development features: automatic GUI discovery and numeric ordering of Sparse parts, preflight disk-space/path checks, and optional read-back verification of the completed RAW staging file. These features are not part of the v0.4.0 release downloads yet.
+The published v0.4.0 release remains available above. The `main` branch contains unreleased v0.5.0 development features: automatic GUI discovery and numeric ordering of Sparse parts, preflight disk-space/path checks, optional read-back verification of the completed RAW staging file, advanced queue controls, and the searchable Diagnostic Center. These features are not part of the v0.4.0 release downloads yet.
 
 ## Tests
 

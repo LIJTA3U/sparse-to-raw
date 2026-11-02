@@ -17,9 +17,11 @@ from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from sparse_to_raw import ConversionCancelled  # noqa: E402
+from diagnostics import DiagnosticStore  # noqa: E402
 
 from sparse_to_raw_gui import (  # noqa: E402
     BatchQueueDialog,
+    DiagnosticCenterDialog,
     BatchWorkerObject,
     ConversionWorkerObject,
     MainWindow,
@@ -54,7 +56,52 @@ def write_sparse_header(path: Path, *, blocks: int = 4, block_size: int = 4096) 
 class SparseToRawGuiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        cls._diagnostics_temp = tempfile.TemporaryDirectory()
+        cls._previous_diagnostics_dir = os.environ.get("SPARSE_TO_RAW_DIAGNOSTICS_DIR")
+        os.environ["SPARSE_TO_RAW_DIAGNOSTICS_DIR"] = cls._diagnostics_temp.name
         cls.app = QApplication.instance() or QApplication(["sparse-to-raw-gui-tests"])
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        if cls._previous_diagnostics_dir is None:
+            os.environ.pop("SPARSE_TO_RAW_DIAGNOSTICS_DIR", None)
+        else:
+            os.environ["SPARSE_TO_RAW_DIAGNOSTICS_DIR"] = cls._previous_diagnostics_dir
+        cls._diagnostics_temp.cleanup()
+
+    def test_main_window_builds_diagnostics_button(self) -> None:
+        window = MainWindow()
+        try:
+            self.assertTrue(hasattr(window, "diagnostics_button"))
+            self.assertEqual(window.diagnostics_button.text(), window.t("diagnostics_button"))
+            self.assertIsInstance(window.diagnostic_store, DiagnosticStore)
+        finally:
+            window.close()
+
+    def test_diagnostic_center_filters_and_displays_events(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            window = MainWindow()
+            window.diagnostic_store = DiagnosticStore(Path(temporary) / "diagnostics")
+            try:
+                window.diagnostic_store.append("error", "conversion", "Bad image header", {"chunks": 2})
+                window.diagnostic_store.append("info", "queue", "Queue started", {"total": 3})
+                dialog = DiagnosticCenterDialog(window)
+                try:
+                    self.assertEqual(dialog.table.rowCount(), 2)
+                    dialog.level_combo.setCurrentIndex(dialog.level_combo.findData("error"))
+                    self.assertEqual(dialog.table.rowCount(), 1)
+                    self.assertEqual(dialog.table.item(0, 1).text(), "ERROR")
+                    dialog.level_combo.setCurrentIndex(dialog.level_combo.findData("all"))
+                    dialog.category_combo.setCurrentIndex(dialog.category_combo.findData("queue"))
+                    self.assertEqual(dialog.table.rowCount(), 1)
+                    dialog.search_edit.setText("started")
+                    self.assertEqual(dialog.table.rowCount(), 1)
+                    dialog.search_edit.setText("not-found")
+                    self.assertEqual(dialog.table.rowCount(), 0)
+                finally:
+                    dialog.close()
+            finally:
+                window.close()
 
     def test_suggested_output_name(self) -> None:
         self.assertEqual(
