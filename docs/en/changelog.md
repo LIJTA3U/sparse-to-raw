@@ -2,7 +2,9 @@
 
 This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — v0.5.0 development
+## [Unreleased]
+
+## [0.5.0] — 2026-11-02
 
 ### Added
 - Paged Sparse Structure Viewer with full validation before browsing, chunk offsets/sizes/checksums, type filters, search, and streaming CSV/JSON export.

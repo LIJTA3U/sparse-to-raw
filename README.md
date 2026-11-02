@@ -20,17 +20,17 @@ A streaming Android Sparse Image v1 inspector and converter that expands Sparse 
 - Protect existing output files by default; `--force` is required to replace them.
 - Report progress, throughput, processed bytes, and chunk counts.
 - Optionally calculate SHA-256 over the logical RAW contents and export JSON reports.
-- Verify a completed RAW staging file by re-reading it and comparing its size and SHA-256 with the expected logical contents (`--verify-output`, current development branch).
+- Verify a completed RAW staging file by re-reading it and comparing its size and SHA-256 with the expected logical contents (`--verify-output`).
 - Merge independent Sparse images in an explicitly supplied order (`--merge-parts`).
 - Stream large images without loading the complete input or output into memory.
 - Use only the Python standard library for the CLI.
-- Provide a PySide6 GUI with Russian/English language selection, saved preferences, recent files, image analysis, sequential batch conversion, visual ordered merging, optional output verification, a searchable Diagnostic Center, and a paged Sparse Structure Viewer with streaming CSV/JSON export (current development branch).
+- Provide a PySide6 GUI with Russian/English language selection, saved preferences, recent files, image analysis, sequential batch conversion, visual ordered merging, optional output verification, a searchable Diagnostic Center, and a paged Sparse Structure Viewer with streaming CSV/JSON export.
 
 `DONT_CARE` ranges are interpreted as zero bytes. The resulting logical RAW contents and size are correct; the filesystem may store zero ranges as sparse holes.
 
 ## Download for Windows
 
-**Release:** [sparse-to-raw v0.4.0](https://github.com/LIJTA3U/sparse-to-raw/releases/tag/v0.4.0)
+**Release:** [sparse-to-raw v0.5.0](https://github.com/LIJTA3U/sparse-to-raw/releases/tag/v0.5.0)
 
 The release provides:
 
@@ -89,9 +89,9 @@ Merge independent Sparse files in the order supplied:
 py sparse_to_raw.py --merge-parts super.img_sparsechunk.0 super.img_sparsechunk.1 --output super_raw.img --sha256
 ```
 
-Each merge input must be a complete, independent Sparse image with its own header. This mode is not intended for arbitrary byte-level pieces cut from one Sparse file. The v0.4.0 release does not automatically discover or numerically sort `super.img_sparsechunk.*` files. The current `main` branch adds GUI discovery and numeric ordering as part of the unreleased v0.5.0 development work.
+Each merge input must be a complete, independent Sparse image with its own header. This mode is not intended for arbitrary byte-level pieces cut from one Sparse file. The GUI can discover groups of `super.img_sparsechunk.*` files and sort their parts numerically. The CLI `--merge-parts` option continues to accept an explicitly ordered list of independent Sparse images.
 
-For all CLI options, examples, and exit behavior, see the [CLI guide](docs/en/cli-guide.md). The current development branch also supports `--verify-output` to re-read the staged RAW result before it is committed.
+For all CLI options, examples, and exit behavior, see the [CLI guide](docs/en/cli-guide.md). The CLI also supports `--verify-output`, which re-reads the staged RAW result before it is committed.
 
 ## Documentation
 
@@ -112,7 +112,7 @@ The [Russian README](README.ru.md) links to the Russian documentation in `docs/r
 
 ## Current development
 
-The published v0.4.0 release remains available above. The `main` branch contains unreleased v0.5.0 development features: automatic GUI discovery and numeric ordering of Sparse parts, preflight disk-space/path checks, optional read-back verification of the completed RAW staging file, advanced queue controls, the searchable Diagnostic Center, and the paged Sparse Structure Viewer. The development branch also localizes operation-log messages, assigns a dedicated Windows taskbar identity/icon, and smooths the existing angular frame without changing the overall theme. These features are not part of the v0.4.0 release downloads yet.
+The v0.5.0 release includes automatic GUI discovery and numeric ordering of Sparse parts, preflight disk-space and path checks, optional read-back verification of completed RAW output, advanced batch-queue controls, the searchable Diagnostic Center, and the paged Sparse Structure Viewer. It also includes localized operation-log messages, a dedicated Windows taskbar identity and application icon, and a smoother version of the existing angular frame. See the [changelog](docs/en/changelog.md) for the complete release history. The earlier v0.4.0 release remains available on the [GitHub releases page](https://github.com/LIJTA3U/sparse-to-raw/releases/tag/v0.4.0).
 
 ## Tests
 
@@ -130,7 +130,7 @@ The core suite covers chunk types, checksums, malformed and truncated data, safe
 - Independent byte-for-byte comparisons were performed on the two real images named above. Verify outputs independently before using them for critical work.
 - The utility works with files only. It does not communicate with phones or flash device partitions.
 - Check input/output paths and available disk space before conversion. Merging needs staging space for the combined output and the currently expanded part.
-- Sparse part discovery and automatic numeric ordering are not included in v0.4.0; provide independent files to `--merge-parts` in the correct order.
+- The GUI can automatically discover and numerically sort Sparse part groups. The CLI `--merge-parts` option still requires independent Sparse images to be supplied in the correct order.
 
 ## References
 
