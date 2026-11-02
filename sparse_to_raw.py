@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import os
@@ -756,6 +757,339 @@ def inspect_sparse(
         cancel_requested=cancel_requested,
     )
 
+
+
+STRUCTURE_PAGE_SIZE = 200
+STRUCTURE_MAX_PAGE_SIZE = 2000
+STRUCTURE_CSV_FIELDS = (
+    "index", "type", "type_code", "file_offset", "output_offset_bytes",
+    "block_count", "stored_size_bytes", "payload_size_bytes",
+    "expanded_size_bytes", "checksum", "fill_pattern",
+)
+
+
+def _read_sparse_structure_header(stream: BinaryIO, source: Path) -> dict[str, Any]:
+    """Read and validate the Sparse file header for structural inspection."""
+    header_bytes = _read_exact(stream, HEADER_SIZE, "sparse header")
+    (
+        magic, major, minor, file_header_size, chunk_header_size,
+        block_size, total_blocks, total_chunks, image_checksum,
+    ) = struct.unpack(HEADER_FMT, header_bytes)
+    if magic != MAGIC:
+        raise SparseImageError(f"Invalid sparse magic: 0x{magic:08X}")
+    if major != 1:
+        raise SparseImageError(f"Unsupported sparse major version: {major}")
+    if file_header_size < HEADER_SIZE:
+        raise SparseImageError(f"Invalid file header size: {file_header_size}")
+    if chunk_header_size < CHUNK_HEADER_SIZE:
+        raise SparseImageError(f"Invalid chunk header size: {chunk_header_size}")
+    if block_size == 0 or block_size % 4:
+        raise SparseImageError(f"Invalid block size {block_size}; it must be positive and divisible by 4")
+    _read_exact(stream, file_header_size - HEADER_SIZE, "extended sparse header")
+    return {
+        "input": str(source),
+        "input_size_bytes": source.stat().st_size,
+        "format": f"Android Sparse {major}.{minor}",
+        "major_version": major,
+        "minor_version": minor,
+        "file_header_size": file_header_size,
+        "chunk_header_size": chunk_header_size,
+        "block_size": block_size,
+        "total_blocks": total_blocks,
+        "total_chunks": total_chunks,
+        "raw_size_bytes": total_blocks * block_size,
+        "header_checksum": f"0x{image_checksum:08X}",
+    }
+
+
+def iter_sparse_chunk_metadata(input_path: str | Path, *, cancel_requested: CancelCallback | None = None):
+    """Yield one bounded metadata record per Sparse chunk.
+
+    This iterator parses chunk headers and seeks over payloads; it does not claim
+    payload/checksum validation. Run :func:`inspect_sparse` first when a verified
+    status is required. Memory use is constant regardless of image size.
+    """
+    source = Path(input_path).expanduser().resolve()
+    if not source.is_file():
+        raise FileNotFoundError(f"Input file not found: {source}")
+    file_size = source.stat().st_size
+    with source.open("rb") as stream:
+        header = _read_sparse_structure_header(stream, source)
+        block_size = int(header["block_size"])
+        total_blocks = int(header["total_blocks"])
+        total_chunks = int(header["total_chunks"])
+        output_blocks = 0
+
+        for chunk_index in range(total_chunks):
+            if cancel_requested is not None and cancel_requested():
+                raise ConversionCancelled("Sparse structure scan cancelled")
+            chunk_file_offset = stream.tell()
+            chunk_header_size = int(header["chunk_header_size"])
+            chunk_header = _read_exact(stream, chunk_header_size, f"chunk {chunk_index} header")
+            chunk_type, reserved, chunk_blocks, total_size = struct.unpack(
+                CHUNK_HEADER_FMT, chunk_header[:CHUNK_HEADER_SIZE]
+            )
+            if reserved != 0:
+                raise SparseImageError(f"Chunk {chunk_index}: reserved field is not zero")
+            if chunk_type not in CHUNK_NAMES:
+                raise SparseImageError(f"Chunk {chunk_index}: unsupported type 0x{chunk_type:04X}")
+
+            expanded_size = chunk_blocks * block_size
+            if chunk_type == CHUNK_RAW:
+                payload_size = expanded_size
+            elif chunk_type == CHUNK_FILL:
+                payload_size = 4
+                if expanded_size % 4:
+                    raise SparseImageError(f"Chunk {chunk_index}: FILL output size is not a multiple of 4")
+            elif chunk_type == CHUNK_DONT_CARE:
+                payload_size = 0
+            else:
+                payload_size = 4
+                if chunk_blocks != 0:
+                    raise SparseImageError(f"Chunk {chunk_index}: CRC32 chunk must have zero blocks")
+                expanded_size = 0
+
+            expected_total_size = chunk_header_size + payload_size
+            if total_size != expected_total_size:
+                raise SparseImageError(
+                    f"Chunk {chunk_index}: invalid total_sz (got {total_size}, expected {expected_total_size})"
+                )
+            if chunk_type != CHUNK_CRC32 and output_blocks + chunk_blocks > total_blocks:
+                raise SparseImageError(f"Chunk {chunk_index}: output exceeds declared total blocks")
+
+            payload_offset = stream.tell()
+            checksum = ""
+            fill_pattern = ""
+            if chunk_type == CHUNK_RAW:
+                payload_end = payload_offset + payload_size
+                if payload_end > file_size:
+                    raise SparseImageError(f"Unexpected end of file while reading RAW data in chunk {chunk_index}")
+                stream.seek(payload_size, os.SEEK_CUR)
+            elif chunk_type == CHUNK_FILL:
+                pattern = _read_exact(stream, 4, f"FILL pattern in chunk {chunk_index}")
+                fill_pattern = pattern.hex(" ").upper()
+            elif chunk_type == CHUNK_CRC32:
+                stored_crc = struct.unpack("<I", _read_exact(stream, 4, f"CRC32 value in chunk {chunk_index}"))[0]
+                checksum = f"0x{stored_crc:08X}"
+
+            expected_position = chunk_file_offset + total_size
+            if stream.tell() != expected_position:
+                raise SparseImageError(f"Chunk {chunk_index}: stored-size accounting mismatch")
+
+            record = {
+                "index": chunk_index,
+                "type": CHUNK_NAMES[chunk_type],
+                "type_code": f"0x{chunk_type:04X}",
+                "file_offset": chunk_file_offset,
+                "file_offset_hex": f"0x{chunk_file_offset:X}",
+                "payload_offset": payload_offset,
+                "output_offset_bytes": output_blocks * block_size,
+                "output_offset_hex": f"0x{output_blocks * block_size:X}",
+                "block_count": chunk_blocks,
+                "stored_size_bytes": total_size,
+                "payload_size_bytes": payload_size,
+                "expanded_size_bytes": expanded_size,
+                "checksum": checksum,
+                "fill_pattern": fill_pattern,
+            }
+            yield record
+            if chunk_type != CHUNK_CRC32:
+                output_blocks += chunk_blocks
+
+        if output_blocks != total_blocks:
+            raise SparseImageError(
+                f"Block count mismatch: found {output_blocks}, expected {total_blocks}"
+            )
+        if stream.read(1):
+            raise SparseImageError("Unexpected trailing bytes after the final chunk")
+
+
+def read_sparse_chunk_page(
+    input_path: str | Path,
+    *,
+    offset: int = 0,
+    limit: int = STRUCTURE_PAGE_SIZE,
+    chunk_type: str | None = None,
+    search: str = "",
+    cancel_requested: CancelCallback | None = None,
+) -> dict[str, Any]:
+    """Return a filtered page of chunk metadata without retaining the full table.
+
+    The caller should first run :func:`inspect_sparse` to validate every payload
+    and checksum. Subsequent page reads only scan chunk headers and seek over data.
+    """
+    if offset < 0:
+        raise ValueError("Page offset must not be negative")
+    if limit < 1 or limit > STRUCTURE_MAX_PAGE_SIZE:
+        raise ValueError(f"Page size must be between 1 and {STRUCTURE_MAX_PAGE_SIZE}")
+    normalized_type = str(chunk_type or "all").upper()
+    if normalized_type not in {"ALL", *CHUNK_NAMES.values()}:
+        raise ValueError(f"Unknown Sparse chunk type filter: {chunk_type}")
+    query = str(search or "").strip().casefold()
+
+    source = Path(input_path).expanduser().resolve()
+    if not source.is_file():
+        raise FileNotFoundError(f"Input file not found: {source}")
+    with source.open("rb") as stream:
+        header = _read_sparse_structure_header(stream, source)
+
+    matched_rows: list[dict[str, Any]] = []
+    total_matches = 0
+    page_end = offset + limit
+    for record in iter_sparse_chunk_metadata(source, cancel_requested=cancel_requested):
+        if normalized_type != "ALL" and record["type"] != normalized_type:
+            continue
+        if query:
+            searchable = " ".join(
+                str(record.get(key, ""))
+                for key in (
+                    "index", "type", "type_code", "file_offset", "file_offset_hex",
+                    "output_offset_bytes", "output_offset_hex", "block_count",
+                    "stored_size_bytes", "expanded_size_bytes", "checksum", "fill_pattern",
+                )
+            ).casefold()
+            if query not in searchable:
+                continue
+        if offset <= total_matches < page_end:
+            matched_rows.append(record)
+        total_matches += 1
+
+    return {
+        "header": header,
+        "rows": matched_rows,
+        "offset": offset,
+        "limit": limit,
+        "total_matches": total_matches,
+        "next_offset": page_end if page_end < total_matches else None,
+        "previous_offset": max(0, offset - limit) if offset > 0 else None,
+    }
+
+
+def export_sparse_structure(
+    input_path: str | Path,
+    output_path: str | Path,
+    *,
+    format: str | None = None,
+    validated_metadata: dict[str, Any] | None = None,
+    force: bool = False,
+    cancel_requested: CancelCallback | None = None,
+    progress_callback: ProgressCallback | None = None,
+) -> dict[str, Any]:
+    """Stream the complete chunk table to JSON or CSV using an atomic output.
+
+    When ``validated_metadata`` is supplied it must be the result of a successful
+    :func:`inspect_sparse` call for the unchanged source file. Otherwise this
+    function performs full validation before exporting.
+    """
+    source = Path(input_path).expanduser().resolve()
+    destination = Path(output_path).expanduser().resolve()
+    if not source.is_file():
+        raise FileNotFoundError(f"Input file not found: {source}")
+    if source == destination:
+        raise ValueError("Input and export paths must be different")
+    if not destination.parent.is_dir():
+        raise FileNotFoundError(f"Export directory not found: {destination.parent}")
+    if destination.exists() and not force:
+        raise FileExistsError(f"Export file already exists: {destination}")
+
+    selected_format = (format or destination.suffix.lstrip(".") or "json").casefold()
+    if selected_format not in {"json", "csv"}:
+        raise ValueError("Structure export format must be JSON or CSV")
+    if validated_metadata is None:
+        validated_metadata = inspect_sparse(source, calculate_sha256=True, cancel_requested=cancel_requested)
+
+    initial_stat = source.stat()
+    metadata_input = validated_metadata.get("input")
+    if metadata_input and Path(str(metadata_input)).expanduser().resolve() != source:
+        raise SparseImageError("Validated metadata belongs to a different Sparse input file")
+    declared_input_size = validated_metadata.get("input_size_bytes")
+    if declared_input_size is not None and int(declared_input_size) != initial_stat.st_size:
+        raise SparseImageError("Sparse input size changed after validation")
+    total_chunks = max(0, int(validated_metadata.get("total_chunks", 0) or 0))
+
+    count = 0
+    last_reported_percent = -1
+
+    def report_progress(*, final: bool = False, force: bool = False) -> None:
+        nonlocal last_reported_percent
+        if progress_callback is None:
+            return
+        percent = 100 if final else (0 if total_chunks == 0 else min(99, int(count * 100 / total_chunks)))
+        # Emit only when the visible percentage changes. Large Sparse images may
+        # contain millions of chunks; per-chunk Qt signals would flood the UI queue.
+        if force or percent != last_reported_percent:
+            progress_callback({
+                "chunks_exported": count,
+                "total_chunks": total_chunks,
+                "percent": percent,
+            })
+            last_reported_percent = percent
+
+    report_progress(force=True)
+    fd, temporary_name = tempfile.mkstemp(
+        prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="" if selected_format == "csv" else "\n") as stream:
+            if selected_format == "csv":
+                writer = csv.DictWriter(stream, fieldnames=STRUCTURE_CSV_FIELDS, extrasaction="ignore")
+                writer.writeheader()
+                for record in iter_sparse_chunk_metadata(source, cancel_requested=cancel_requested):
+                    if cancel_requested is not None and cancel_requested():
+                        raise ConversionCancelled("Sparse structure export cancelled")
+                    writer.writerow(record)
+                    count += 1
+                    report_progress()
+            else:
+                summary_keys = (
+                    "format", "input_size_bytes", "block_size", "total_blocks", "total_chunks",
+                    "raw_size_bytes", "header_checksum", "computed_crc32", "sha256",
+                )
+                summary = {key: validated_metadata.get(key) for key in summary_keys if key in validated_metadata}
+                stream.write('{\n  "metadata": ')
+                json.dump(summary, stream, ensure_ascii=False, indent=2)
+                stream.write(',\n  "chunks": [\n')
+                first = True
+                for record in iter_sparse_chunk_metadata(source, cancel_requested=cancel_requested):
+                    if cancel_requested is not None and cancel_requested():
+                        raise ConversionCancelled("Sparse structure export cancelled")
+                    if not first:
+                        stream.write(',\n')
+                    stream.write('    ')
+                    json.dump(record, stream, ensure_ascii=False)
+                    first = False
+                    count += 1
+                    report_progress()
+                stream.write('\n  ]\n}\n')
+            stream.flush()
+            os.fsync(stream.fileno())
+
+        if cancel_requested is not None and cancel_requested():
+            raise ConversionCancelled("Sparse structure export cancelled")
+        current_stat = source.stat()
+        if (initial_stat.st_size, initial_stat.st_mtime_ns) != (current_stat.st_size, current_stat.st_mtime_ns):
+            raise SparseImageError("Sparse input changed while its structure was being exported")
+        if force:
+            os.replace(temporary_path, destination)
+        else:
+            try:
+                os.link(temporary_path, destination)
+            except FileExistsError:
+                raise FileExistsError(f"Export file already exists: {destination}") from None
+            temporary_path.unlink()
+        report_progress(final=True, force=True)
+        return {
+            "output": str(destination),
+            "format": selected_format,
+            "chunks_exported": count,
+            "output_size_bytes": destination.stat().st_size,
+        }
+    finally:
+        try:
+            temporary_path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 _SPARSE_PART_NAME_RE = re.compile(

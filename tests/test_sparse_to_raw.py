@@ -25,6 +25,9 @@ from sparse_to_raw import (
     merge_sparse_to_raw,
     preflight_batch,
     preflight_output,
+    read_sparse_chunk_page,
+    export_sparse_structure,
+    iter_sparse_chunk_metadata,
     InsufficientDiskSpaceError,
     OutputVerificationError,
     main,
@@ -340,6 +343,118 @@ class SparseToRawTests(unittest.TestCase):
         )
         payload = chunk(CHUNK_RAW, len(raw) // block_size, raw)
         path.write_bytes(header + payload)
+
+
+    def test_sparse_structure_page_reports_offsets_types_and_checksums(self) -> None:
+        raw = b"ABCD" + b"EFGH" + (b"\x00" * 4)
+        crc_after_raw = zlib.crc32(b"ABCD") & 0xFFFFFFFF
+        chunks = [
+            chunk(CHUNK_RAW, 1, b"ABCD"),
+            crc_chunk(crc_after_raw),
+            chunk(CHUNK_FILL, 1, b"EFGH"),
+            chunk(CHUNK_DONT_CARE, 1),
+        ]
+        self.input_path.write_bytes(make_sparse(chunks, raw))
+        validated = inspect_sparse(self.input_path, calculate_sha256=True)
+        page = read_sparse_chunk_page(self.input_path, offset=0, limit=2)
+
+        self.assertEqual(page["total_matches"], 4)
+        self.assertEqual(page["next_offset"], 2)
+        self.assertEqual([row["type"] for row in page["rows"]], ["RAW", "CRC32"])
+        self.assertEqual(page["rows"][0]["file_offset"], 28)
+        self.assertEqual(page["rows"][0]["output_offset_bytes"], 0)
+        self.assertEqual(page["rows"][0]["stored_size_bytes"], 16)
+        self.assertEqual(page["rows"][1]["checksum"], f"0x{crc_after_raw:08X}")
+        self.assertEqual(page["rows"][1]["output_offset_bytes"], 4)
+        self.assertEqual(validated["total_chunks"], page["header"]["total_chunks"])
+
+    def test_sparse_structure_page_supports_type_search_and_pagination(self) -> None:
+        raw = b"ABCD" + b"EFGH" + (b"\x00" * 4)
+        chunks = [chunk(CHUNK_RAW, 1, b"ABCD"), chunk(CHUNK_FILL, 1, b"EFGH"), chunk(CHUNK_DONT_CARE, 1)]
+        self.input_path.write_bytes(make_sparse(chunks, raw))
+        inspect_sparse(self.input_path)
+
+        fill = read_sparse_chunk_page(self.input_path, chunk_type="fill")
+        self.assertEqual(fill["total_matches"], 1)
+        self.assertEqual(fill["rows"][0]["type"], "FILL")
+        self.assertEqual(fill["rows"][0]["fill_pattern"], "45 46 47 48")
+
+        searched = read_sparse_chunk_page(self.input_path, search="0x3C")
+        self.assertEqual(searched["total_matches"], 1)
+        self.assertEqual(searched["rows"][0]["type"], "DONT_CARE")
+
+        second_page = read_sparse_chunk_page(self.input_path, offset=2, limit=2)
+        self.assertEqual([row["type"] for row in second_page["rows"]], ["DONT_CARE"])
+        self.assertIsNone(second_page["next_offset"])
+
+    def test_sparse_structure_export_streams_json_and_csv(self) -> None:
+        raw = b"ABCD" + b"EFGH"
+        self.input_path.write_bytes(make_sparse([chunk(CHUNK_RAW, 2, raw)], raw))
+        json_path = self.root / "structure.json"
+        csv_path = self.root / "structure.csv"
+
+        json_result = export_sparse_structure(self.input_path, json_path, format="json")
+        csv_result = export_sparse_structure(self.input_path, csv_path, format="csv")
+
+        payload = json.loads(json_path.read_text(encoding="utf-8"))
+        self.assertEqual(json_result["chunks_exported"], 1)
+        self.assertEqual(payload["metadata"]["total_chunks"], 1)
+        self.assertEqual(payload["chunks"][0]["type"], "RAW")
+        self.assertEqual(csv_result["chunks_exported"], 1)
+        self.assertIn("file_offset", csv_path.read_text(encoding="utf-8"))
+
+    def test_sparse_structure_export_coalesces_progress_for_large_chunk_tables(self) -> None:
+        raw_data = b"ABCD" * 300
+        chunks = [chunk(CHUNK_RAW, 1, b"ABCD") for _ in range(300)]
+        self.input_path.write_bytes(make_sparse(chunks, raw_data))
+        progress: list[dict] = []
+        result = export_sparse_structure(
+            self.input_path, self.root / "large-structure.json", format="json",
+            progress_callback=progress.append,
+        )
+        percentages = [int(item["percent"]) for item in progress]
+        self.assertEqual(percentages, sorted(percentages))
+        self.assertEqual(percentages[0], 0)
+        self.assertEqual(percentages[-1], 100)
+        self.assertLessEqual(len(progress), 102)
+        self.assertEqual(result["chunks_exported"], 300)
+
+    def test_sparse_structure_export_preserves_existing_file_on_cancel(self) -> None:
+        raw = b"ABCD"
+        self.input_path.write_bytes(make_sparse([chunk(CHUNK_RAW, 1, raw)], raw))
+        destination = self.root / "structure.json"
+        destination.write_text("keep", encoding="utf-8")
+        with self.assertRaises(ConversionCancelled):
+            export_sparse_structure(
+                self.input_path, destination, format="json", force=True,
+                cancel_requested=lambda: True,
+            )
+        self.assertEqual(destination.read_text(encoding="utf-8"), "keep")
+
+    def test_sparse_structure_export_reports_monotonic_progress(self) -> None:
+        raw_data = b"ABCD" + b"EFGH"
+        self.input_path.write_bytes(make_sparse([
+            chunk(CHUNK_RAW, 1, b"ABCD"),
+            chunk(CHUNK_RAW, 1, b"EFGH"),
+        ], raw_data))
+        progress: list[dict] = []
+        export_sparse_structure(
+            self.input_path,
+            self.root / "progress.json",
+            format="json",
+            progress_callback=progress.append,
+        )
+        percentages = [int(item["percent"]) for item in progress]
+        self.assertEqual(percentages, sorted(percentages))
+        self.assertEqual(percentages[-1], 100)
+        self.assertEqual(progress[-1]["chunks_exported"], 2)
+
+    def test_sparse_structure_rejects_malformed_chunk_header(self) -> None:
+        header = struct.pack(HEADER_FMT, MAGIC, 1, 0, 28, 12, BLOCK_SIZE, 1, 1, 0)
+        malformed = struct.pack(CHUNK_FMT, 0x1234, 0, 1, 16) + b"ABCD"
+        self.input_path.write_bytes(header + malformed)
+        with self.assertRaisesRegex(SparseImageError, "unsupported type"):
+            list(iter_sparse_chunk_metadata(self.input_path))
 
     def test_discover_sparse_parts_sorts_indices_numerically(self) -> None:
         for index in [10, 2, 1, 0, 9, 8, 7, 6, 5, 4, 3]:

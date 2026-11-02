@@ -5,6 +5,11 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [Unreleased] — v0.5.0 development
 
 ### Added
+- Paged Sparse Structure Viewer with full validation before browsing, chunk offsets/sizes/checksums, type filters, search, and streaming CSV/JSON export.
+- Background cancellable structure export with atomic publication and source-file change detection.
+- Windows taskbar identity and application icon initialization for the running GUI.
+- Localized operation-log messages and diagnostic categories for Russian/English UI modes.
+- Antialiased angular window frame with smoother left-side transitions while retaining the existing dark/cyan/yellow design.
 - Interactive batch queue controls: drag reordering, task-level cancel/skip, pause/resume between files, retry selected failures, and status filters.
 - Queue progress and JSON summaries include waiting/running/success/failed/cancelled/skipped task states.
 - Local rotating JSONL diagnostic history with severity/operation/date filters and text search.
@@ -17,6 +22,7 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Saved GUI verification preference for single conversion, batch conversion, and Sparse merging.
 
 ### Changed
+- The existing UI layout and color palette remain intact; the frameless shell uses smooth painter paths rather than a pixelated region mask.
 - Verification progress is reported as a separate read-back phase; failed or cancelled verification preserves an existing destination.
 
 ## [0.4.0] — released

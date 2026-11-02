@@ -45,6 +45,18 @@ Use **Export ZIP** to create a sanitized troubleshooting bundle containing JSONL
 
 Conversion, analysis, and merge results can still be exported as JSON where the corresponding report action is available. Batch conversion writes its summary to the output folder; these reports are separate from the diagnostic ZIP.
 
+## Sparse Structure Viewer
+
+Use **Sparse structure** to inspect the chunk layout after a full validation. The paged table shows chunk index/type, file and logical RAW offsets, block count, stored/expanded sizes, CRC32 checkpoint values, and validation status. Filter by `RAW`, `FILL`, `DONT_CARE`, or `CRC32`, or search by index, offset, size, or checksum. Pages contain up to 200 rows and are scanned without retaining the complete table in memory.
+
+CSV and JSON structure exports run in a background worker, show progress, and support cancellation. The export contains metadata and chunk layout, not the RAW payload. The viewer checks the source file identity after validation; if the file changes, validate it again before paging or exporting. See [Sparse Structure Viewer](sparse-structure-viewer.md).
+
 ## Windows packages
 
 The recommended download is `sparse-to-raw-gui-windows.zip`. Extract the entire package and run `sparse-to-raw-gui.exe` from its folder. Do not move the executable away from its bundled libraries. The one-file executable is also provided, but can start more slowly while its bundled files are unpacked.
+
+## Windows icon and localized operation log
+
+The GUI sets the bundled `assets/sparse-to-raw.ico` as both the application and main-window icon and assigns a stable Windows AppUserModelID before creating `QApplication`. This allows Windows to show and group the application with its own taskbar icon when launched from the packaged executable. When running from source, the same icon is set on the Qt application/window.
+
+Known operation-log messages are rendered in the currently selected UI language. Event records retain stable source messages and structured categories so the Diagnostic Center can re-render them after switching between Russian and English. The custom dark/cyan/yellow shell is retained; its slanted left contour is painted with antialiased curved paths rather than a pixel-clipping mask.

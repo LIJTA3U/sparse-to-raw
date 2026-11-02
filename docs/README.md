@@ -15,4 +15,6 @@ Common pages:
 - [Расширенная очередь заданий (RU)](ru/task-queue.md)
 - [Diagnostic Center (EN)](en/diagnostic-center.md)
 - [Центр диагностики (RU)](ru/diagnostic-center.md)
+- [Sparse Structure Viewer (EN)](en/sparse-structure-viewer.md)
+- [Просмотр структуры Sparse (RU)](ru/sparse-structure-viewer.md)
 - [Screenshots / Скриншоты](screenshots/)

@@ -16,7 +16,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from sparse_to_raw import ConversionCancelled  # noqa: E402
+from sparse_to_raw import ConversionCancelled, inspect_sparse, read_sparse_chunk_page  # noqa: E402
 from diagnostics import DiagnosticStore  # noqa: E402
 
 from sparse_to_raw_gui import (  # noqa: E402
@@ -26,6 +26,11 @@ from sparse_to_raw_gui import (  # noqa: E402
     ConversionWorkerObject,
     MainWindow,
     MergeDialog,
+    SparseStructureDialog,
+    SparseStructureWorker,
+    SparseStructureExportWorker,
+    APP_USER_MODEL_ID,
+    localize_log_message,
     format_speed,
     resource_path,
     suggested_output_path,
@@ -53,6 +58,16 @@ def write_sparse_header(path: Path, *, blocks: int = 4, block_size: int = 4096) 
     )
 
 
+def write_valid_sparse_image(path: Path) -> None:
+    """Write a tiny complete Sparse v1 image with one RAW chunk and valid CRC."""
+    raw = b"DATA"
+    header = SPARSE_HEADER.pack(
+        SPARSE_MAGIC, 1, 0, SPARSE_HEADER.size, 12, 4, 1, 1,
+        zlib.crc32(raw) & 0xFFFFFFFF,
+    )
+    path.write_bytes(header + struct.pack("<HHII", 0xCAC1, 0, 1, 16) + raw)
+
+
 class SparseToRawGuiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -77,6 +92,137 @@ class SparseToRawGuiTests(unittest.TestCase):
             self.assertIsInstance(window.diagnostic_store, DiagnosticStore)
         finally:
             window.close()
+
+    def test_main_window_sets_application_icon_and_keeps_smooth_custom_frame(self) -> None:
+        window = MainWindow()
+        try:
+            self.assertEqual(APP_USER_MODEL_ID, "LIJTA3U.sparse-to-raw")
+            self.assertFalse(window.windowIcon().isNull())
+            self.assertFalse(self.app.windowIcon().isNull())
+            outer, inner = window._frame_paths()
+            self.assertGreater(outer.elementCount(), 8)
+            self.assertGreater(inner.elementCount(), 8)
+            # The shell is painted with QPainter antialiasing rather than an integer QRegion clip.
+            self.assertTrue(window.mask().isEmpty())
+        finally:
+            window.close()
+
+    def test_operation_log_retranslates_known_messages_when_language_changes(self) -> None:
+        window = MainWindow()
+        try:
+            window.language = "ru"
+            window.append_log("info", "Interface ready. Choose an Android Sparse Image.")
+            self.assertIn("Интерфейс готов", window.log_view.toPlainText())
+            window.append_log("info", "Batch started: 3 file(s).", category="queue")
+            self.assertIn("Пакетная обработка начата", window.log_view.toPlainText())
+            window.language = "en"
+            window._render_log_history()
+            self.assertIn("Interface ready. Choose an Android Sparse Image.", window.log_view.toPlainText())
+            self.assertIn("Batch started: 3 file(s).", window.log_view.toPlainText())
+            self.assertIn("Задание", localize_log_message("Conversion task success", "ru"))
+            self.assertEqual(
+                localize_log_message("Queue paused between tasks.", "ru"),
+                "Очередь приостановлена между заданиями.",
+            )
+            self.assertEqual(
+                localize_log_message("Merge cancelled; staged output discarded.", "ru"),
+                "Объединение отменено; временный результат удалён.",
+            )
+            self.assertIn(
+                "Нет доступа",
+                localize_log_message("Preflight failed: PermissionError: denied", "ru"),
+            )
+            self.assertEqual(
+                localize_log_message("Очередь продолжена.", "en"),
+                "Queue resumed.",
+            )
+            self.assertEqual(
+                localize_log_message("Отмена запрошена; временный результат будет удалён.", "en"),
+                "Cancellation requested; the temporary output will be removed.",
+            )
+        finally:
+            window.close()
+
+    def test_sparse_structure_viewer_displays_verified_chunk_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "viewer.sparse"
+            write_valid_sparse_image(source)
+            window = MainWindow()
+            dialog = SparseStructureDialog(window, str(source))
+            try:
+                window.language = "ru"
+                summary = inspect_sparse(source, calculate_sha256=True)
+                page = read_sparse_chunk_page(source, offset=0, limit=dialog.PAGE_SIZE)
+                signature = dialog._file_signature(source)
+                dialog._on_loaded({"summary": summary, "page": page, "signature": signature})
+                self.assertEqual(dialog.table.rowCount(), 1)
+                self.assertEqual(dialog.table.item(0, 1).text(), "RAW")
+                self.assertEqual(dialog.table.item(0, 8).text(), "Проверено")
+                self.assertTrue(dialog.export_csv_button.isEnabled())
+                self.assertTrue(dialog.export_json_button.isEnabled())
+                self.assertIn("RAW", dialog.details_view.toPlainText())
+            finally:
+                dialog.close()
+                window.close()
+
+    def test_sparse_structure_worker_rejects_input_changed_after_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "changed.sparse"
+            write_valid_sparse_image(source)
+            signature = SparseStructureWorker._signature(source)
+            worker = SparseStructureWorker(
+                source, offset=0, limit=200, chunk_type="ALL", search="",
+                validate=False, validated_metadata={"total_chunks": 1},
+                expected_signature=signature,
+            )
+            loaded: list[dict] = []
+            failed: list[str] = []
+            worker.loaded.connect(loaded.append)
+            worker.failed.connect(failed.append)
+            source.write_bytes(source.read_bytes() + b"changed")
+            worker.run()
+            self.assertEqual(loaded, [])
+            self.assertTrue(failed)
+            self.assertIn("changed after validation", failed[0])
+
+    def test_sparse_structure_export_worker_rejects_source_changed_after_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "changed-export.sparse"
+            output = root / "changed-export.csv"
+            write_valid_sparse_image(source)
+            summary = inspect_sparse(source, calculate_sha256=True)
+            signature = SparseStructureWorker._signature(source)
+            worker = SparseStructureExportWorker(source, output, "csv", summary, signature, False)
+            failures: list[str] = []
+            worker.failed.connect(failures.append)
+            source.write_bytes(source.read_bytes() + b"changed")
+            worker.run()
+            self.assertTrue(failures)
+            self.assertIn("changed after validation", failures[0])
+            self.assertFalse(output.exists())
+
+    def test_sparse_structure_export_worker_exports_in_background_and_reports_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "export.sparse"
+            output = root / "export.csv"
+            write_valid_sparse_image(source)
+            summary = inspect_sparse(source, calculate_sha256=True)
+            signature = SparseStructureWorker._signature(source)
+            worker = SparseStructureExportWorker(source, output, "csv", summary, signature, False)
+            reports: list[dict] = []
+            failures: list[str] = []
+            progress: list[dict] = []
+            worker.succeeded.connect(reports.append)
+            worker.failed.connect(failures.append)
+            worker.progress.connect(progress.append)
+            worker.run()
+            self.assertEqual(failures, [])
+            self.assertEqual(len(reports), 1)
+            self.assertTrue(output.is_file())
+            self.assertEqual(reports[0]["chunks_exported"], 1)
+            self.assertEqual(progress[-1]["percent"], 100)
 
     def test_diagnostic_center_filters_and_displays_events(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -7,8 +7,10 @@ queue, visual merge ordering, and JSON reports without changing the CLI API.
 """
 from __future__ import annotations
 
+import ctypes
 import json
 import os
+import re
 import sys
 import time
 import tempfile
@@ -23,7 +25,7 @@ from typing import Any
 from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, QSize, QSettings, QStandardPaths, Qt, QThread, Signal, Slot, qVersion
 from PySide6.QtGui import (
     QBrush, QColor, QFont, QIcon, QLinearGradient, QPainter, QPainterPath,
-    QPen, QRegion, QTextCharFormat, QTextCursor,
+    QPen, QTextCharFormat, QTextCursor,
 )
 from PySide6.QtCore import QUrl
 import PySide6
@@ -47,11 +49,14 @@ from sparse_to_raw import (
     merge_sparse_to_raw,
     preflight_batch,
     preflight_output,
+    read_sparse_chunk_page,
+    export_sparse_structure,
 )
 
 APP_VERSION = "v0.5.0-dev"
 ORG_NAME = "LIJTA3U"
 APP_NAME = "sparse-to-raw"
+APP_USER_MODEL_ID = "LIJTA3U.sparse-to-raw"
 MAX_RECENT = 12
 
 COLORS = {
@@ -126,6 +131,66 @@ I18N: dict[str, dict[str, str]] = {
         "verify_output_tooltip": "Повторно прочитать временный RAW и сравнить размер и SHA-256 с ожидаемым логическим содержимым. Увеличивает объём чтения с диска.",
         "verify_progress": "Проверка записанного RAW",
         "verify_passed": "Проверка записанного RAW пройдена",
+        "structure_button": "Структура Sparse",
+        "structure_title": "Структура Sparse-образа",
+        "structure_input": "Исходный Sparse-образ",
+        "structure_load": "Проверить и загрузить",
+        "structure_loading": "Проверка и чтение структуры…",
+        "structure_filter_type": "Тип чанка",
+        "structure_all_types": "Все типы",
+        "structure_search": "Поиск по индексу, смещению, размеру…",
+        "structure_apply_filter": "Применить фильтр",
+        "structure_previous": "Назад",
+        "structure_next": "Далее",
+        "structure_page": "Строки {start}–{end} из {total}",
+        "structure_summary": "{format} · блок: {block_size} · блоков: {blocks} · чанков: {chunks} · RAW: {raw_size} · CRC32: {checksum}",
+        "structure_col_index": "№",
+        "structure_col_type": "Тип",
+        "structure_col_file_offset": "Смещение файла",
+        "structure_col_output_offset": "Смещение RAW",
+        "structure_col_blocks": "Блоки",
+        "structure_col_stored": "В файле",
+        "structure_col_expanded": "После распаковки",
+        "structure_col_checksum": "Контрольная сумма",
+        "structure_col_status": "Проверка",
+        "structure_status_ok": "Проверено",
+        "structure_status_crc_ok": "CRC32 OK",
+        "structure_details_title": "Сведения о выбранном чанке",
+        "structure_details_empty": "Выберите чанк в таблице, чтобы посмотреть подробности.",
+        "structure_export_csv": "Экспорт CSV…",
+        "structure_export_json": "Экспорт JSON…",
+        "structure_export_progress": "Экспорт чанков: {done} / {total}",
+        "structure_export_success": "Структура экспортирована:",
+        "structure_export_error": "Не удалось экспортировать структуру:",
+        "structure_validation_required": "Сначала выполните полную проверку Sparse-образа.",
+        "structure_source_changed": "Исходный файл изменился после проверки. Загрузите его заново.",
+        "structure_cancel": "Отменить проверку",
+        "structure_close": "Закрыть",
+        "structure_detail_index": "Индекс чанка",
+        "structure_detail_type": "Тип",
+        "structure_detail_file_offset": "Смещение в файле",
+        "structure_detail_payload_offset": "Смещение данных",
+        "structure_detail_output_offset": "Смещение в RAW",
+        "structure_detail_blocks": "Количество блоков",
+        "structure_detail_stored": "Размер в Sparse",
+        "structure_detail_payload": "Размер полезных данных",
+        "structure_detail_expanded": "Размер в RAW",
+        "structure_detail_checksum": "Значение CRC32",
+        "structure_detail_fill": "Шаблон FILL",
+        "log_interface_ready": "Интерфейс готов. Выберите Android Sparse-образ.",
+        "log_input_file": "Входной файл: {value}",
+        "log_output_file": "Выходной файл: {value}",
+        "log_expected_size": "Ожидаемый размер RAW: {value}",
+        "log_open_input": "Открытие входного файла: {value}",
+        "log_streaming_started": "Начата потоковая обработка чанков.",
+        "log_header_ok": "Проверка заголовка: OK · Android Sparse {version} · чанков: {chunks} · ожидаемый RAW: {size}",
+        "log_output_saved": "Результат сохранён: {value}",
+        "log_conversion_failed": "Ошибка преобразования: {value}",
+        "log_validation_error": "Ошибка проверки: {value}",
+        "log_preflight_failed": "Предварительная проверка не пройдена: {value}",
+        "log_report_saved": "Отчёт сохранён: {value}",
+        "log_cancel_requested": "Запрошена безопасная отмена.",
+        "log_operation_cancelled": "Операция отменена. Временный результат удалён; существующий файл не изменён.",
         "diagnostics_button": "Диагностика",
         "diagnostics_title": "Центр диагностики",
         "diagnostics_filter_level": "Уровень",
@@ -146,6 +211,7 @@ I18N: dict[str, dict[str, str]] = {
         "diagnostics_cat_preflight": "Предварительная проверка",
         "diagnostics_cat_verification": "Проверка RAW",
         "diagnostics_cat_diagnostics": "Диагностика",
+        "diagnostics_cat_structure": "Структура Sparse",
         "diagnostics_period_today": "Сегодня",
         "diagnostics_period_week": "Последние 7 дней",
         "diagnostics_time": "Время",
@@ -226,6 +292,66 @@ I18N: dict[str, dict[str, str]] = {
         "verify_output_tooltip": "Re-read the staged RAW file and compare its size and SHA-256 with the expected logical contents. This adds disk I/O.",
         "verify_progress": "Verifying written RAW output",
         "verify_passed": "Written RAW verification passed",
+        "structure_button": "Sparse structure",
+        "structure_title": "Sparse image structure",
+        "structure_input": "Input Sparse image",
+        "structure_load": "Validate and load",
+        "structure_loading": "Validating and reading structure…",
+        "structure_filter_type": "Chunk type",
+        "structure_all_types": "All types",
+        "structure_search": "Search index, offset or size…",
+        "structure_apply_filter": "Apply filter",
+        "structure_previous": "Previous",
+        "structure_next": "Next",
+        "structure_page": "Rows {start}–{end} of {total}",
+        "structure_summary": "{format} · block: {block_size} · blocks: {blocks} · chunks: {chunks} · RAW: {raw_size} · CRC32: {checksum}",
+        "structure_col_index": "#",
+        "structure_col_type": "Type",
+        "structure_col_file_offset": "File offset",
+        "structure_col_output_offset": "RAW offset",
+        "structure_col_blocks": "Blocks",
+        "structure_col_stored": "Stored",
+        "structure_col_expanded": "Expanded",
+        "structure_col_checksum": "Checksum",
+        "structure_col_status": "Status",
+        "structure_status_ok": "Verified",
+        "structure_status_crc_ok": "CRC32 OK",
+        "structure_details_title": "Selected chunk details",
+        "structure_details_empty": "Select a chunk in the table to inspect its details.",
+        "structure_export_csv": "Export CSV…",
+        "structure_export_json": "Export JSON…",
+        "structure_export_progress": "Exporting chunks: {done} / {total}",
+        "structure_export_success": "Structure exported:",
+        "structure_export_error": "Could not export structure:",
+        "structure_validation_required": "Run a full Sparse image validation first.",
+        "structure_source_changed": "The input file changed after validation. Load it again.",
+        "structure_cancel": "Cancel validation",
+        "structure_close": "Close",
+        "structure_detail_index": "Chunk index",
+        "structure_detail_type": "Type",
+        "structure_detail_file_offset": "File offset",
+        "structure_detail_payload_offset": "Payload offset",
+        "structure_detail_output_offset": "RAW offset",
+        "structure_detail_blocks": "Block count",
+        "structure_detail_stored": "Sparse stored size",
+        "structure_detail_payload": "Payload size",
+        "structure_detail_expanded": "RAW expanded size",
+        "structure_detail_checksum": "Stored CRC32 value",
+        "structure_detail_fill": "FILL pattern",
+        "log_interface_ready": "Interface ready. Choose an Android Sparse Image.",
+        "log_input_file": "Input file: {value}",
+        "log_output_file": "Output file: {value}",
+        "log_expected_size": "Expected RAW size: {value}",
+        "log_open_input": "Opening input file: {value}",
+        "log_streaming_started": "Streaming chunk processing started.",
+        "log_header_ok": "Header validation: OK · Android Sparse {version} · chunks: {chunks} · expected RAW: {size}",
+        "log_output_saved": "Output saved: {value}",
+        "log_conversion_failed": "Conversion failed: {value}",
+        "log_validation_error": "Validation error: {value}",
+        "log_preflight_failed": "Preflight failed: {value}",
+        "log_report_saved": "Report saved: {value}",
+        "log_cancel_requested": "Safe cancellation requested.",
+        "log_operation_cancelled": "Operation cancelled. Temporary output removed; the existing file was not modified.",
         "diagnostics_button": "Diagnostics",
         "diagnostics_title": "Diagnostic Center",
         "diagnostics_filter_level": "Level",
@@ -246,6 +372,7 @@ I18N: dict[str, dict[str, str]] = {
         "diagnostics_cat_preflight": "Preflight",
         "diagnostics_cat_verification": "RAW verification",
         "diagnostics_cat_diagnostics": "Diagnostics",
+        "diagnostics_cat_structure": "Sparse structure",
         "diagnostics_period_today": "Today",
         "diagnostics_period_week": "Last 7 days",
         "diagnostics_time": "Time",
@@ -263,6 +390,246 @@ I18N: dict[str, dict[str, str]] = {
         "diagnostics_privacy": "The export contains a sanitized event log and basic runtime versions. Sparse/RAW input files, recent-file lists, environment variables, account names, and computer names are not included. User profile paths and credential-shaped values are redacted.",
     },
 }
+
+
+_LOG_TRANSLATION_RULES: tuple[tuple[re.Pattern[str], str, str], ...] = (
+    (re.compile(r"^(?:Interface ready\. Choose an Android Sparse Image\.|Интерфейс готов\. Выберите Android Sparse-образ\.)$", re.I),
+     "Интерфейс готов. Выберите Android Sparse-образ.", "Interface ready. Choose an Android Sparse Image."),
+    (re.compile(r"^(?:Opening input file:|Открытие входного файла:)\s*(?P<value>.*)$", re.I),
+     "Открытие входного файла: {value}", "Opening input file: {value}"),
+    (re.compile(r"^(?:Input file:|Входной файл:)\s*(?P<value>.*)$", re.I),
+     "Входной файл: {value}", "Input file: {value}"),
+    (re.compile(r"^(?:Input:|Входной образ:)\s*(?P<value>.*)$", re.I),
+     "Входной образ: {value}", "Input: {value}"),
+    (re.compile(r"^(?:Output:|Выходной файл:)\s*(?P<value>.*)$", re.I),
+     "Выходной файл: {value}", "Output: {value}"),
+    (re.compile(r"^(?:Expected RAW size:|Ожидаемый размер RAW:)\s*(?P<value>.*)$", re.I),
+     "Ожидаемый размер RAW: {value}", "Expected RAW size: {value}"),
+    (re.compile(r"^(?:Начата потоковая обработка чанков\.|Streaming chunk processing started\.)$", re.I),
+     "Начата потоковая обработка чанков.", "Streaming chunk processing started."),
+    (re.compile(r"^(?:Проверка заголовка: OK|Header validation: OK)\s*·\s*Android Sparse (?P<version>[0-9.]+)\s*·\s*(?:чанков|chunks):\s*(?P<chunks>[^·]+)\s*·\s*(?:ожидаемый RAW|expected RAW):\s*(?P<size>.*)$", re.I),
+     "Проверка заголовка: OK · Android Sparse {version} · чанков: {chunks} · ожидаемый RAW: {size}",
+     "Header validation: OK · Android Sparse {version} · chunks: {chunks} · expected RAW: {size}"),
+    (re.compile(r"^(?:Проверка CRC32 чанка|CRC32 chunk check)\s*(?P<index>\d+):\s*OK$", re.I),
+     "Проверка CRC32 чанка {index}: OK", "CRC32 chunk check {index}: OK"),
+    (re.compile(r"^(?:CRC32 mismatch в чанке|CRC32 mismatch in chunk)\s*(?P<index>\d+)\.?$", re.I),
+     "Несовпадение CRC32 в чанке {index}.", "CRC32 mismatch in chunk {index}."),
+    (re.compile(r"^(?:Итоговый размер временного RAW|Staged RAW output size):\s*(?P<value>.*)$", re.I),
+     "Итоговый размер временного RAW: {value}", "Staged RAW output size: {value}"),
+    (re.compile(r"^(?:Проверка числа блоков и структуры: OK|Block count and structure check: OK)\s*·\s*(?P<value>.*)$", re.I),
+     "Проверка числа блоков и структуры: OK · {value}", "Block count and structure check: OK · {value}"),
+    (re.compile(r"^(?:CRC32-чанков успешно проверено|CRC32 chunks successfully checked):\s*(?P<value>.*)$", re.I),
+     "CRC32-чанков успешно проверено: {value}", "CRC32 chunks successfully checked: {value}"),
+    (re.compile(r"^(?:Проверка общей контрольной суммы образа|Image checksum validation)\.{0,3}$", re.I),
+     "Проверка общей контрольной суммы образа…", "Image checksum validation…"),
+    (re.compile(r"^(?:Проверка общей контрольной суммы: OK|Image checksum validation: OK)\s*·\s*(?P<value>.*)$", re.I),
+     "Проверка общей контрольной суммы: OK · {value}", "Image checksum validation: OK · {value}"),
+    (re.compile(r"^(?:Общая контрольная сумма образа не совпадает\.|Image checksum mismatch\.)$", re.I),
+     "Общая контрольная сумма образа не совпадает.", "Image checksum mismatch."),
+    (re.compile(r"^(?:Общая контрольная сумма не задана в заголовке; проверка пропущена\.|No image checksum is present in the header; validation skipped\.)$", re.I),
+     "Общая контрольная сумма не задана в заголовке; проверка пропущена.",
+     "No image checksum is present in the header; validation skipped."),
+    (re.compile(r"^(?:Обнаружены лишние байты после последнего чанка\.|Unexpected trailing bytes after the final chunk\.)$", re.I),
+     "Обнаружены лишние байты после последнего чанка.", "Unexpected trailing bytes after the final chunk."),
+    (re.compile(r"^(?:Результат сохранён:|Output saved:)\s*(?P<value>.*)$", re.I),
+     "Результат сохранён: {value}", "Output saved: {value}"),
+    (re.compile(r"^(?:Output saved:|Результат сохранён:)\s*(?P<value>.*)$", re.I),
+     "Результат сохранён: {value}", "Output saved: {value}"),
+    (re.compile(r"^(?:Re-reading staged RAW output for SHA-256 verification:|Повторное чтение временного RAW для проверки SHA-256:)\s*(?P<value>.*)$", re.I),
+     "Повторное чтение временного RAW для проверки SHA-256: {value}",
+     "Re-reading staged RAW output for SHA-256 verification: {value}"),
+    (re.compile(r"^(?:RAW output SHA-256 does not match the logical Sparse contents\.|SHA-256 выходного RAW не совпадает с логическим содержимым Sparse\.)$", re.I),
+     "SHA-256 выходного RAW не совпадает с логическим содержимым Sparse.",
+     "RAW output SHA-256 does not match the logical Sparse contents."),
+    (re.compile(r"^(?:RAW output verification passed:|Проверка записанного RAW пройдена:)\s*(?P<value>.*)$", re.I),
+     "Проверка записанного RAW пройдена: {value}", "RAW output verification passed: {value}"),
+    (re.compile(r"^(?:RAW output verification cancelled; staged output will be discarded\.|Проверка выходного RAW отменена; временный результат будет удалён\.)$", re.I),
+     "Проверка выходного RAW отменена; временный результат будет удалён.",
+     "RAW output verification cancelled; staged output will be discarded."),
+    (re.compile(r"^(?:Merging|Объединение) (?P<count>\d+) (?:independent Sparse parts in the supplied order|независимых Sparse-частей в указанном порядке)\.$", re.I),
+     "Объединение {count} независимых Sparse-частей в указанном порядке.",
+     "Merging {count} independent Sparse parts in the supplied order."),
+    (re.compile(r"^(?:Part|Часть) (?P<index>\d+)/(?P<total>\d+): (?:validating|проверка) (?P<name>.*)$", re.I),
+     "Часть {index}/{total}: проверка {name}", "Part {index}/{total}: validating {name}"),
+    (re.compile(r"^(?:Verifying the completed merged RAW staging file before commit\.|Проверка временного объединённого RAW перед сохранением\.)$", re.I),
+     "Проверка временного объединённого RAW перед сохранением.",
+     "Verifying the completed merged RAW staging file before commit."),
+    (re.compile(r"^(?:Merge cancelled; temporary outputs will be removed\.|Объединение отменено; временные файлы будут удалены\.)$", re.I),
+     "Объединение отменено; временные файлы будут удалены.",
+     "Merge cancelled; temporary outputs will be removed."),
+    (re.compile(r"^(?:Validation error:|Ошибка проверки:)\s*(?P<value>.*)$", re.I),
+     "Ошибка проверки: {value}", "Validation error: {value}"),
+    (re.compile(r"^(?:Preflight failed:|Предварительная проверка не пройдена:)\s*(?P<value>.*)$", re.I),
+     "Предварительная проверка не пройдена: {value}", "Preflight failed: {value}"),
+    (re.compile(r"^Preflight passed: (?P<free>.+) free; (?P<required>.+) required including merge staging and safety margin\.$", re.I),
+     "Предварительная проверка пройдена: свободно {free}; требуется {required} с учётом временного файла и запаса.",
+     "Preflight passed: {free} free; {required} required including merge staging and safety margin."),
+    (re.compile(r"^(?:Проверка образа завершена успешно; выходной файл не создавался\.|Image inspection completed successfully; no output file was created\.)$", re.I),
+     "Проверка образа завершена успешно; выходной файл не создавался.",
+     "Image inspection completed successfully; no output file was created."),
+    (re.compile(r"^(?:Conversion failed:|Ошибка преобразования:)\s*(?P<value>.*)$", re.I),
+     "Ошибка преобразования: {value}", "Conversion failed: {value}"),
+    (re.compile(r"^(?:Safe cancellation requested\.|Запрошена безопасная отмена\.)$", re.I),
+     "Запрошена безопасная отмена.", "Safe cancellation requested."),
+    (re.compile(r"^(?:Отмена запрошена; временный результат будет удалён\.|Cancellation requested; the temporary output will be removed\.)$", re.I),
+     "Отмена запрошена; временный результат будет удалён.",
+     "Cancellation requested; the temporary output will be removed."),
+    (re.compile(r"^(?:Operation cancelled\. Temporary output removed; the existing file was not modified\.|Операция отменена\. Временный результат удалён; существующий файл не изменён\.)$", re.I),
+     "Операция отменена. Временный результат удалён; существующий файл не изменён.",
+     "Operation cancelled. Temporary output removed; the existing file was not modified."),
+    (re.compile(r"^(?:Report saved:|Отчёт сохранён:)\s*(?P<value>.*)$", re.I),
+     "Отчёт сохранён: {value}", "Report saved: {value}"),
+    (re.compile(r"^(?:Logical RAW SHA-256:|SHA-256 логического RAW:)\s*(?P<value>.*)$", re.I),
+     "SHA-256 логического RAW: {value}", "Logical RAW SHA-256: {value}"),
+    (re.compile(r"^(?:Verified output SHA-256:|SHA-256 проверенного RAW:)\s*(?P<value>.*)$", re.I),
+     "SHA-256 проверенного RAW: {value}", "Verified output SHA-256: {value}"),
+    (re.compile(r"^(?:Diagnostic ZIP exported:|Диагностический ZIP экспортирован:)\s*(?P<value>.*)$", re.I),
+     "Диагностический ZIP экспортирован: {value}", "Diagnostic ZIP exported: {value}"),
+    (re.compile(r"^(?:Diagnostic history cleared\.|История диагностики очищена\.)$", re.I),
+     "История диагностики очищена.", "Diagnostic history cleared."),
+    (re.compile(r"^(?:Log cleared\.|Журнал очищен\.)$", re.I),
+     "Журнал очищен.", "Log cleared."),
+    (re.compile(r"^Batch started: (?P<total>\d+) file\(s\)\.$", re.I),
+     "Пакетная обработка начата. Файлов: {total}.", "Batch started: {total} file(s)."),
+    (re.compile(r"^Batch preflight passed: (?P<free>.+) free; (?P<required>.+) required including safety margin\.$", re.I),
+     "Предварительная проверка очереди пройдена: свободно {free}; требуется {required} с учётом запаса.",
+     "Batch preflight passed: {free} free; {required} required including safety margin."),
+    (re.compile(r"^Batch preflight failed; no files were converted: (?P<value>.*)$", re.I),
+     "Предварительная проверка очереди не пройдена; файлы не преобразованы: {value}",
+     "Batch preflight failed; no files were converted: {value}"),
+    (re.compile(r"^\[(?P<index>\d+)/(?P<total>\d+)\] Skipped: (?P<value>.*)$", re.I),
+     "[{index}/{total}] Пропущено: {value}", "[{index}/{total}] Skipped: {value}"),
+    (re.compile(r"^\[(?P<index>\d+)/(?P<total>\d+)\] Cancelled before start: (?P<value>.*)$", re.I),
+     "[{index}/{total}] Отменено до начала: {value}", "[{index}/{total}] Cancelled before start: {value}"),
+    (re.compile(r"^\[(?P<index>\d+)/(?P<total>\d+)\] Cancelled: (?P<value>.*)$", re.I),
+     "[{index}/{total}] Отменено: {value}", "[{index}/{total}] Cancelled: {value}"),
+    (re.compile(r"^\[(?P<index>\d+)/(?P<total>\d+)\] Completed: (?P<value>.*)$", re.I),
+     "[{index}/{total}] Завершено: {value}", "[{index}/{total}] Completed: {value}"),
+    (re.compile(r"^\[(?P<index>\d+)/(?P<total>\d+)\] Failed: (?P<value>[^\n]+)(?:\n(?P<details>.*))?$", re.I),
+     "[{index}/{total}] Ошибка: {value}{details}", "[{index}/{total}] Failed: {value}{details}"),
+    (re.compile(r"^Batch report saved: (?P<value>.*)$", re.I),
+     "Отчёт пакетной обработки сохранён: {value}", "Batch report saved: {value}"),
+    (re.compile(r"^Could not save batch JSON report: (?P<value>.*)$", re.I),
+     "Не удалось сохранить JSON-отчёт пакетной обработки: {value}", "Could not save batch JSON report: {value}"),
+    (re.compile(r"^Analysis failed: (?P<value>.*)$", re.I),
+     "Ошибка анализа: {value}", "Analysis failed: {value}"),
+    (re.compile(r"^Sparse structure loaded: (?P<count>\d+) chunk\(s\)$", re.I),
+     "Структура Sparse загружена. Чанков: {count}.", "Sparse structure loaded: {count} chunk(s)"),
+    (re.compile(r"^Sparse structure scan failed: (?P<value>.*)$", re.I),
+     "Не удалось прочитать структуру Sparse: {value}", "Sparse structure scan failed: {value}"),
+    (re.compile(r"^Sparse structure scan cancelled\.$", re.I),
+     "Чтение структуры Sparse отменено.", "Sparse structure scan cancelled."),
+    (re.compile(r"^Sparse structure export failed: (?P<value>.*)$", re.I),
+     "Не удалось экспортировать структуру Sparse: {value}", "Sparse structure export failed: {value}"),
+    (re.compile(r"^Sparse structure exported: (?P<value>.*)$", re.I),
+     "Структура Sparse экспортирована: {value}", "Sparse structure exported: {value}"),
+    (re.compile(r"^Diagnostic ZIP export failed: (?P<value>.*)$", re.I),
+     "Не удалось экспортировать диагностический ZIP: {value}", "Diagnostic ZIP export failed: {value}"),
+    (re.compile(r"^Diagnostic ZIP exported: (?P<value>.*)$", re.I),
+     "Диагностический ZIP экспортирован: {value}", "Diagnostic ZIP exported: {value}"),
+    (re.compile(r"^Input file: (?P<value>.*)$", re.I),
+     "Входной файл: {value}", "Input file: {value}"),
+    (re.compile(r"^Output file: (?P<value>.*)$", re.I),
+     "Выходной файл: {value}", "Output file: {value}"),
+    (re.compile(r"^Input: (?P<value>.*)$", re.I),
+     "Входной образ: {value}", "Input: {value}"),
+    (re.compile(r"^Output: (?P<value>.*)$", re.I),
+     "Выходной файл: {value}", "Output: {value}"),
+    (re.compile(r"^Expected RAW size: (?P<value>.*)$", re.I),
+     "Ожидаемый размер RAW: {value}", "Expected RAW size: {value}"),
+    (re.compile(r"^Logical RAW SHA-256: (?P<value>.*)$", re.I),
+     "SHA-256 логического RAW: {value}", "Logical RAW SHA-256: {value}"),
+    (re.compile(r"^Verified output SHA-256: (?P<value>.*)$", re.I),
+     "SHA-256 проверенного RAW: {value}", "Verified output SHA-256: {value}"),
+    (re.compile(r"^Conversion cancelled; existing output preserved\.$", re.I),
+     "Конвертация отменена; существующий выходной файл сохранён.", "Conversion cancelled; existing output preserved."),
+    (re.compile(r"^Operation cancelled\. Temporary output removed; destination was not modified\.$", re.I),
+     "Операция отменена. Временный файл удалён; файл назначения не изменён.",
+     "Operation cancelled. Temporary output removed; destination was not modified."),
+    (re.compile(r"^Safe cancellation requested\.$", re.I),
+     "Запрошена безопасная отмена.", "Safe cancellation requested."),
+    (re.compile(r"^Sparse structure export cancelled\.$", re.I),
+     "Экспорт структуры Sparse отменён.", "Sparse structure export cancelled."),
+    (re.compile(r"^(?:Queue paused between tasks\.|Очередь приостановлена между заданиями\.)$", re.I),
+     "Очередь приостановлена между заданиями.", "Queue paused between tasks."),
+    (re.compile(r"^(?:Queue resumed\.|Очередь продолжена\.)$", re.I),
+     "Очередь продолжена.", "Queue resumed."),
+    (re.compile(r"^(?:Cancellation requested for:|Запрошена отмена задания:)\s*(?P<value>.*)$", re.I),
+     "Запрошена отмена задания: {value}", "Cancellation requested for: {value}"),
+    (re.compile(r"^(?:Skip requested for:|Запрошен пропуск задания:)\s*(?P<value>.*)$", re.I),
+     "Запрошен пропуск задания: {value}", "Skip requested for: {value}"),
+    (re.compile(r"^(?:Only selected tasks with Failed, Cancelled, or Skipped status will be retried\.|Повторно запускаются только выбранные задания со статусом «Ошибка», «Отменено» или «Пропущено»\.)$", re.I),
+     "Повторно запускаются только выбранные задания со статусом «Ошибка», «Отменено» или «Пропущено».",
+     "Only selected tasks with Failed, Cancelled, or Skipped status will be retried."),
+    (re.compile(r"^(?:Queue cancellation requested; the current file will stop at a safe boundary\.|Запрошена отмена очереди; текущая задача остановится на безопасной границе\.)$", re.I),
+     "Запрошена отмена очереди; текущая задача остановится на безопасной границе.",
+     "Queue cancellation requested; the current file will stop at a safe boundary."),
+    (re.compile(r"^(?:Merge cancelled; staged output discarded\.|Объединение отменено; временный результат удалён\.)$", re.I),
+     "Объединение отменено; временный результат удалён.", "Merge cancelled; staged output discarded."),
+    (re.compile(r"^(?:Batch preflight failed:|Предварительная проверка очереди не пройдена:)\s*(?P<value>.*)$", re.I),
+     "Предварительная проверка очереди не пройдена: {value}", "Batch preflight failed: {value}"),
+    (re.compile(r"^(?:Merge preflight failed:|Предварительная проверка объединения не пройдена:)\s*(?P<value>.*)$", re.I),
+     "Предварительная проверка объединения не пройдена: {value}", "Merge preflight failed: {value}"),
+)
+
+
+def localize_log_message(message: str, language: str) -> str:
+    """Render known operation-log messages in the selected UI language."""
+    text = str(message)
+    index = 1 if language == "en" else 0
+    for pattern, ru_template, en_template in _LOG_TRANSLATION_RULES:
+        match = pattern.match(text)
+        if match:
+            template = en_template if index else ru_template
+            fields = {key: (value or "") for key, value in match.groupdict().items()}
+            if language != "en":
+                exception_names = {
+                    "FileNotFoundError": "Файл не найден",
+                    "PermissionError": "Нет доступа",
+                    "IsADirectoryError": "Указан каталог",
+                    "FileExistsError": "Файл уже существует",
+                    "ValueError": "Недопустимое значение",
+                    "OSError": "Ошибка ввода-вывода",
+                    "OutputVerificationError": "Ошибка проверки выходного RAW",
+                    "SparseImageError": "Ошибка структуры Sparse",
+                    "ConversionCancelled": "Операция отменена",
+                }
+                for key, value in tuple(fields.items()):
+                    for english_name, russian_name in exception_names.items():
+                        value = re.sub(rf"\b{re.escape(english_name)}\b", russian_name, value)
+                    fields[key] = value
+            try:
+                return template.format(**fields)
+            except (KeyError, IndexError, ValueError):
+                return template
+    metric_match = re.fullmatch(
+        r"(?P<operation>[A-Za-z_-]+) task (?P<status>success|failed|cancelled|skipped)",
+        text,
+        re.I,
+    )
+    if metric_match and language != "en":
+        operations = {
+            "conversion": "Конвертация", "analysis": "Анализ", "merge": "Объединение",
+            "batch": "Пакетная обработка", "queue": "Очередь", "preflight": "Предварительная проверка",
+            "verification": "Проверка RAW", "diagnostics": "Диагностика",
+            "structure": "Структура Sparse", "application": "Приложение",
+        }
+        statuses = {"success": "успешно", "failed": "с ошибкой", "cancelled": "отменено", "skipped": "пропущено"}
+        operation = operations.get(metric_match.group("operation").casefold(), metric_match.group("operation"))
+        status = statuses[metric_match.group("status").casefold()]
+        return f"Задание: {operation} — {status}."
+    return text
+
+
+def set_windows_app_user_model_id() -> bool:
+    """Set a stable Windows AppUserModelID so the taskbar groups the app icon correctly."""
+    if sys.platform != "win32":
+        return False
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+        return True
+    except (AttributeError, OSError, TypeError):
+        return False
 
 
 def resource_path(relative: str) -> Path:
@@ -808,6 +1175,651 @@ def connect_worker(worker: ConversionWorkerObject, parent: QWidget, finished_cal
     return thread
 
 
+class SparseStructureWorker(QObject):
+    """Validate a Sparse file once, then read one bounded page of chunk metadata."""
+    progress = Signal(dict)
+    log = Signal(str, str)
+    loaded = Signal(dict)
+    failed = Signal(str)
+    cancelled = Signal()
+    finished = Signal()
+
+    def __init__(
+        self,
+        source: Path,
+        *,
+        offset: int,
+        limit: int,
+        chunk_type: str,
+        search: str,
+        validate: bool,
+        validated_metadata: dict[str, Any] | None = None,
+        expected_signature: tuple[int, int, int] | None = None,
+    ) -> None:
+        super().__init__()
+        self.source = source
+        self.offset = offset
+        self.limit = limit
+        self.chunk_type = chunk_type
+        self.search = search
+        self.validate = validate
+        self.validated_metadata = validated_metadata
+        self.expected_signature = expected_signature
+        self._cancel_event = threading.Event()
+
+    @staticmethod
+    def _signature(path: Path) -> tuple[int, int, int]:
+        stat = path.stat()
+        return (stat.st_size, stat.st_mtime_ns, getattr(stat, "st_ino", 0))
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            if self._cancel_event.is_set():
+                raise ConversionCancelled("Sparse structure scan cancelled")
+            signature_before = self._signature(self.source)
+            if self.validate:
+                summary = inspect_sparse(
+                    self.source,
+                    calculate_sha256=True,
+                    progress_callback=self.progress.emit,
+                    event_callback=self.log.emit,
+                    cancel_requested=self._cancel_event.is_set,
+                )
+            else:
+                if self.validated_metadata is None or self.expected_signature is None:
+                    raise ValueError("A successful full validation is required before paging")
+                summary = self.validated_metadata
+                if signature_before != self.expected_signature:
+                    raise ValueError("Sparse input changed after validation; validate it again")
+            signature = self._signature(self.source)
+            if signature != signature_before:
+                raise ValueError("Sparse input changed during validation; validate it again")
+            page = read_sparse_chunk_page(
+                self.source,
+                offset=self.offset,
+                limit=self.limit,
+                chunk_type=self.chunk_type,
+                search=self.search,
+                cancel_requested=self._cancel_event.is_set,
+            )
+            if self._signature(self.source) != signature:
+                raise ValueError("Sparse input changed while its structure was being read")
+            self.loaded.emit({"summary": summary, "page": page, "signature": signature})
+        except ConversionCancelled:
+            self.cancelled.emit()
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+        finally:
+            self.finished.emit()
+
+    def request_cancel(self) -> None:
+        self._cancel_event.set()
+
+
+class SparseStructureExportWorker(QObject):
+    """Export a previously validated Sparse structure without blocking the GUI."""
+    progress = Signal(dict)
+    succeeded = Signal(dict)
+    failed = Signal(str)
+    cancelled = Signal()
+    finished = Signal()
+
+    def __init__(
+        self,
+        source: Path,
+        destination: Path,
+        selected_format: str,
+        validated_metadata: dict[str, Any],
+        expected_signature: tuple[int, int, int],
+        force: bool,
+    ) -> None:
+        super().__init__()
+        self.source = source
+        self.destination = destination
+        self.selected_format = selected_format
+        self.validated_metadata = validated_metadata
+        self.expected_signature = expected_signature
+        self.force = force
+        self._cancel_event = threading.Event()
+
+    @staticmethod
+    def _signature(path: Path) -> tuple[int, int, int]:
+        stat = path.stat()
+        return (stat.st_size, stat.st_mtime_ns, getattr(stat, "st_ino", 0))
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            if self._signature(self.source) != self.expected_signature:
+                raise ValueError("Sparse input changed after validation; validate it again")
+            result = export_sparse_structure(
+                self.source,
+                self.destination,
+                format=self.selected_format,
+                validated_metadata=self.validated_metadata,
+                force=self.force,
+                cancel_requested=self._cancel_event.is_set,
+                progress_callback=self.progress.emit,
+            )
+        except ConversionCancelled:
+            self.cancelled.emit()
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+        else:
+            self.succeeded.emit(result)
+        finally:
+            self.finished.emit()
+
+    def request_cancel(self) -> None:
+        self._cancel_event.set()
+
+
+class SparseStructureDialog(QDialog):
+    """Paged, verified Sparse chunk viewer with streaming CSV/JSON export."""
+    PAGE_SIZE = 200
+
+    def __init__(self, parent: "MainWindow", initial_path: str = "") -> None:
+        super().__init__(parent)
+        self.main = parent
+        self.thread: QThread | None = None
+        self.worker: SparseStructureWorker | None = None
+        self.export_thread: QThread | None = None
+        self.export_worker: SparseStructureExportWorker | None = None
+        self._export_target: Path | None = None
+        self._close_when_finished = False
+        self._validated_summary: dict[str, Any] | None = None
+        self._source_signature: tuple[int, int, int] | None = None
+        self._page_offset = 0
+        self._page_data: dict[str, Any] | None = None
+        self._visible_rows: list[dict[str, Any]] = []
+        self.setWindowTitle(parent.t("structure_title"))
+        self.resize(1220, 790)
+        self.setModal(False)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(14, 14, 14, 14)
+        root.setSpacing(9)
+
+        source_row = QHBoxLayout()
+        self.input_edit = QLineEdit(initial_path)
+        self.input_edit.setPlaceholderText(parent.t("structure_input"))
+        self.browse_button = QPushButton(parent.t("browse"))
+        self.browse_button.setIcon(parent.icon_for("SP_DialogOpenButton"))
+        self.browse_button.setIconSize(QSize(parent.icon_size, parent.icon_size))
+        self.load_button = QPushButton(parent.t("structure_load"))
+        self.load_button.setIcon(parent.icon_for("SP_FileDialogContentsView"))
+        self.load_button.setIconSize(QSize(parent.icon_size, parent.icon_size))
+        self.cancel_button = QPushButton(parent.t("structure_cancel"))
+        self.cancel_button.setEnabled(False)
+        source_row.addWidget(self.input_edit, 1)
+        source_row.addWidget(self.browse_button)
+        source_row.addWidget(self.load_button)
+        source_row.addWidget(self.cancel_button)
+        root.addLayout(source_row)
+
+        self.summary_label = QLabel(parent.t("structure_validation_required"))
+        self.summary_label.setWordWrap(True)
+        self.summary_label.setStyleSheet(f"color:{COLORS['cyan']};background:#0b1520;border:1px solid {COLORS['border']};padding:8px")
+        root.addWidget(self.summary_label)
+
+        filters = QHBoxLayout()
+        self.filter_label = QLabel(parent.t("structure_filter_type"))
+        filters.addWidget(self.filter_label)
+        self.type_combo = QComboBox()
+        for label, value in (
+            (parent.t("structure_all_types"), "ALL"),
+            ("RAW", "RAW"), ("FILL", "FILL"),
+            ("DONT_CARE", "DONT_CARE"), ("CRC32", "CRC32"),
+        ):
+            self.type_combo.addItem(label, value)
+        filters.addWidget(self.type_combo)
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText(parent.t("structure_search"))
+        filters.addWidget(self.search_edit, 1)
+        self.filter_button = QPushButton(parent.t("structure_apply_filter"))
+        self.filter_button.setIcon(parent.icon_for("SP_FileDialogDetailedView"))
+        filters.addWidget(self.filter_button)
+        root.addLayout(filters)
+
+        self.table = QTableWidget(0, 9)
+        self.table.setHorizontalHeaderLabels([
+            parent.t("structure_col_index"), parent.t("structure_col_type"),
+            parent.t("structure_col_file_offset"), parent.t("structure_col_output_offset"),
+            parent.t("structure_col_blocks"), parent.t("structure_col_stored"),
+            parent.t("structure_col_expanded"), parent.t("structure_col_checksum"),
+            parent.t("structure_col_status"),
+        ])
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setAlternatingRowColors(True)
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeMode.Stretch)
+        root.addWidget(self.table, 1)
+
+        self.details_title = QLabel(parent.t("structure_details_title"))
+        self.details_title.setStyleSheet(f"color:{COLORS['cyan']};font-weight:700")
+        root.addWidget(self.details_title)
+        self.details_view = QTextEdit()
+        self.details_view.setReadOnly(True)
+        self.details_view.setMaximumHeight(138)
+        self.details_view.setPlaceholderText(parent.t("structure_details_empty"))
+        self.details_view.setFont(QFont("Consolas", 9))
+        root.addWidget(self.details_view)
+
+        footer = QHBoxLayout()
+        self.previous_button = QPushButton(parent.t("structure_previous"))
+        self.next_button = QPushButton(parent.t("structure_next"))
+        self.page_label = QLabel("—")
+        self.page_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        footer.addWidget(self.previous_button)
+        footer.addStretch()
+        footer.addWidget(self.page_label, 1)
+        footer.addStretch()
+        footer.addWidget(self.next_button)
+        root.addLayout(footer)
+
+        export_row = QHBoxLayout()
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setTextVisible(False)
+        self.progress.setFixedHeight(13)
+        self.export_csv_button = QPushButton(parent.t("structure_export_csv"))
+        self.export_json_button = QPushButton(parent.t("structure_export_json"))
+        self.export_csv_button.setEnabled(False)
+        self.export_json_button.setEnabled(False)
+        close_button = QPushButton(parent.t("structure_close"))
+        export_row.addWidget(self.progress, 1)
+        export_row.addWidget(self.export_csv_button)
+        export_row.addWidget(self.export_json_button)
+        export_row.addWidget(close_button)
+        root.addLayout(export_row)
+
+        self.browse_button.clicked.connect(self._browse)
+        self.load_button.clicked.connect(lambda: self._start_load(validate=True, reset_page=True))
+        self.cancel_button.clicked.connect(self._cancel)
+        self.filter_button.clicked.connect(self._apply_filter)
+        self.search_edit.returnPressed.connect(self._apply_filter)
+        self.type_combo.currentIndexChanged.connect(self._apply_filter)
+        self.previous_button.clicked.connect(self._previous_page)
+        self.next_button.clicked.connect(self._next_page)
+        self.table.itemSelectionChanged.connect(self._show_selected_details)
+        self.export_csv_button.clicked.connect(lambda: self._export("csv"))
+        self.export_json_button.clicked.connect(lambda: self._export("json"))
+        close_button.clicked.connect(self.close)
+        self.previous_button.setEnabled(False)
+        self.next_button.setEnabled(False)
+        self.setStyleSheet(
+            f"QDialog{{background:{COLORS['background']};color:{COLORS['text']}}} "
+            f"QTableWidget,QLineEdit,QComboBox,QTextEdit{{background:#07111b;color:{COLORS['text']};border:1px solid #29434f;gridline-color:#203946}} "
+            f"QHeaderView::section{{background:#0d1c29;color:{COLORS['cyan']};padding:6px;border:1px solid #243a47}} "
+            f"QPushButton{{background:#0a1b27;color:{COLORS['cyan']};border:1px solid #24505e;padding:7px;border-radius:4px}} "
+            f"QPushButton:disabled{{color:#526570;background:#0b1219;border-color:#1c2c35}} "
+            f"QProgressBar{{background:#111d28;border:1px solid #24414e}} QProgressBar::chunk{{background:{COLORS['cyan']}}}"
+        )
+
+    def _browse(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, self.main.t("structure_input"), self.input_edit.text() or str(Path.home()),
+            "Android Sparse images (*)",
+        )
+        if path:
+            self.input_edit.setText(path)
+            self._validated_summary = None
+            self._source_signature = None
+            self._page_data = None
+            self._visible_rows = []
+            self.table.setRowCount(0)
+            self.page_label.setText("—")
+            self.export_csv_button.setEnabled(False)
+            self.export_json_button.setEnabled(False)
+
+    def _set_busy(self, busy: bool) -> None:
+        self.input_edit.setEnabled(not busy)
+        self.browse_button.setEnabled(not busy)
+        self.load_button.setEnabled(not busy)
+        self.filter_button.setEnabled(not busy)
+        self.type_combo.setEnabled(not busy)
+        self.search_edit.setEnabled(not busy)
+        self.previous_button.setEnabled(not busy and bool(self._page_data and self._page_data.get("previous_offset") is not None))
+        self.next_button.setEnabled(not busy and bool(self._page_data and self._page_data.get("next_offset") is not None))
+        self.cancel_button.setEnabled(busy)
+        self.export_csv_button.setEnabled(not busy and self._validated_summary is not None)
+        self.export_json_button.setEnabled(not busy and self._validated_summary is not None)
+
+    def _start_load(self, *, validate: bool, reset_page: bool = False, offset: int | None = None) -> None:
+        if (self.thread is not None and self.thread.isRunning()) or (self.export_thread is not None and self.export_thread.isRunning()):
+            return
+        if self.main.operation_running(exclude=self):
+            QMessageBox.information(self, self.main.t("structure_title"), self.main.t("another_operation"))
+            return
+        source = Path(self.input_edit.text().strip()).expanduser().resolve()
+        if not source.is_file():
+            QMessageBox.warning(self, self.main.t("structure_title"), self.main.t("missing_source").format(path=source))
+            return
+        if reset_page:
+            self._page_offset = 0
+        if offset is not None:
+            self._page_offset = max(0, int(offset))
+        if validate:
+            self._validated_summary = None
+            self._source_signature = None
+            self._page_data = None
+            self._visible_rows = []
+            self.table.setRowCount(0)
+            self.export_csv_button.setEnabled(False)
+            self.export_json_button.setEnabled(False)
+        try:
+            signature = self._file_signature(source)
+        except OSError as exc:
+            self._validated_summary = None
+            self._source_signature = None
+            self._page_data = None
+            self._visible_rows = []
+            self.table.setRowCount(0)
+            self.export_csv_button.setEnabled(False)
+            self.export_json_button.setEnabled(False)
+            QMessageBox.warning(self, self.main.t("structure_title"), str(exc))
+            return
+        if not validate:
+            if self._validated_summary is None or self._source_signature != signature:
+                validate = True
+                self._validated_summary = None
+                self._source_signature = None
+                self._page_offset = 0
+        self.progress.setValue(0)
+        self.summary_label.setText(self.main.t("structure_loading"))
+        self._set_busy(True)
+        worker = SparseStructureWorker(
+            source,
+            offset=self._page_offset,
+            limit=self.PAGE_SIZE,
+            chunk_type=str(self.type_combo.currentData() or "ALL"),
+            search=self.search_edit.text(),
+            validate=validate,
+            validated_metadata=self._validated_summary,
+            expected_signature=self._source_signature,
+        )
+        self.worker = worker
+        worker.progress.connect(self._on_progress)
+        worker.log.connect(self._on_log)
+        worker.loaded.connect(self._on_loaded)
+        worker.failed.connect(self._on_failed)
+        worker.cancelled.connect(self._on_cancelled)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._thread_finished)
+        self.thread = thread
+        thread.start()
+
+    @staticmethod
+    def _file_signature(path: Path) -> tuple[int, int, int]:
+        stat = path.stat()
+        return (stat.st_size, stat.st_mtime_ns, getattr(stat, "st_ino", 0))
+
+    @Slot(dict)
+    def _on_progress(self, data: dict[str, Any]) -> None:
+        self.progress.setValue(max(0, min(100, int(data.get("percent", 0)))))
+
+    @Slot(str, str)
+    def _on_log(self, level: str, message: str) -> None:
+        self.main.append_log(level, message, category="structure")
+
+    @Slot(dict)
+    def _on_loaded(self, result: dict[str, Any]) -> None:
+        self._validated_summary = result["summary"]
+        self._source_signature = result["signature"]
+        self._page_data = result["page"]
+        self._render_page()
+        self.progress.setValue(100)
+        self.export_csv_button.setEnabled(True)
+        self.export_json_button.setEnabled(True)
+        self.main.append_log(
+            "success",
+            f"Sparse structure loaded: {self._validated_summary.get('total_chunks', 0)} chunk(s)",
+            category="structure",
+            details={"chunks": int(self._validated_summary.get("total_chunks", 0)), "block_size": int(self._validated_summary.get("block_size", 0))},
+        )
+
+    def _render_page(self) -> None:
+        if not self._page_data or not self._validated_summary:
+            return
+        header = self._page_data["header"]
+        summary = self._validated_summary
+        self.summary_label.setText(self.main.t("structure_summary").format(
+            format=header["format"],
+            block_size=format_bytes(int(header["block_size"]), self.main.language),
+            blocks=f"{int(header['total_blocks']):,}".replace(",", " "),
+            chunks=f"{int(header['total_chunks']):,}".replace(",", " "),
+            raw_size=format_bytes(int(header["raw_size_bytes"]), self.main.language),
+            checksum=summary.get("computed_crc32", header.get("header_checksum", "—")),
+        ))
+        rows = self._page_data["rows"]
+        self._visible_rows = rows
+        self.table.setRowCount(len(rows))
+        for row_index, record in enumerate(rows):
+            status = self.main.t("structure_status_crc_ok") if record["type"] == "CRC32" else self.main.t("structure_status_ok")
+            values = (
+                str(int(record["index"]) + 1),
+                str(record["type"]),
+                str(record["file_offset_hex"]),
+                str(record["output_offset_hex"]),
+                str(record["block_count"]),
+                format_bytes(int(record["stored_size_bytes"]), self.main.language),
+                format_bytes(int(record["expanded_size_bytes"]), self.main.language),
+                str(record["checksum"] or "—"),
+                status,
+            )
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setToolTip(value)
+                if column == 8:
+                    item.setForeground(QColor(COLORS["green"]))
+                self.table.setItem(row_index, column, item)
+        offset = int(self._page_data["offset"])
+        total = int(self._page_data["total_matches"])
+        start = offset + 1 if total else 0
+        end = min(offset + len(rows), total)
+        self.page_label.setText(self.main.t("structure_page").format(start=start, end=end, total=total))
+        self.previous_button.setEnabled(offset > 0)
+        self.next_button.setEnabled(self._page_data.get("next_offset") is not None)
+        self.details_view.clear()
+        self.details_view.setPlaceholderText(self.main.t("structure_details_empty"))
+        if rows:
+            self.table.selectRow(0)
+
+    def _show_selected_details(self) -> None:
+        selected = self.table.selectionModel().selectedRows()
+        if not selected:
+            self.details_view.clear()
+            return
+        row = selected[0].row()
+        if row < 0 or row >= len(self._visible_rows):
+            return
+        record = self._visible_rows[row]
+        lines = [
+            f"{self.main.t('structure_detail_index')}: {int(record['index']) + 1}",
+            f"{self.main.t('structure_detail_type')}: {record['type']} ({record['type_code']})",
+            f"{self.main.t('structure_detail_file_offset')}: {record['file_offset_hex']} ({record['file_offset']:,} B)",
+            f"{self.main.t('structure_detail_payload_offset')}: 0x{int(record['payload_offset']):X}",
+            f"{self.main.t('structure_detail_output_offset')}: {record['output_offset_hex']}",
+            f"{self.main.t('structure_detail_blocks')}: {record['block_count']}",
+            f"{self.main.t('structure_detail_stored')}: {format_bytes(int(record['stored_size_bytes']), self.main.language)}",
+            f"{self.main.t('structure_detail_payload')}: {format_bytes(int(record['payload_size_bytes']), self.main.language)}",
+            f"{self.main.t('structure_detail_expanded')}: {format_bytes(int(record['expanded_size_bytes']), self.main.language)}",
+        ]
+        if record.get("checksum"):
+            lines.append(f"{self.main.t('structure_detail_checksum')}: {record['checksum']}")
+        if record.get("fill_pattern"):
+            lines.append(f"{self.main.t('structure_detail_fill')}: {record['fill_pattern']}")
+        self.details_view.setPlainText("\n".join(lines))
+
+    def _apply_filter(self, *_args) -> None:
+        self._start_load(validate=False, reset_page=True)
+
+    def _previous_page(self) -> None:
+        if self._page_data and self._page_data.get("previous_offset") is not None:
+            self._start_load(validate=False, offset=int(self._page_data["previous_offset"]))
+
+    def _next_page(self) -> None:
+        if self._page_data and self._page_data.get("next_offset") is not None:
+            self._start_load(validate=False, offset=int(self._page_data["next_offset"]))
+
+    def _cancel(self) -> None:
+        if self.worker is not None:
+            self.worker.request_cancel()
+            self.cancel_button.setEnabled(False)
+        if self.export_worker is not None:
+            self.export_worker.request_cancel()
+            self.cancel_button.setEnabled(False)
+
+    @Slot(str)
+    def _on_failed(self, message: str) -> None:
+        self.summary_label.setText(f"{self.main.t('status_error')}: {friendly_error(message, self.main.language)}")
+        self.main.append_log("error", f"Sparse structure scan failed: {message}", category="structure")
+        QMessageBox.warning(self, self.main.t("structure_title"), f"{friendly_error(message, self.main.language)}\n\n{message}")
+
+    @Slot()
+    def _on_cancelled(self) -> None:
+        self.summary_label.setText(self.main.t("status_cancelled"))
+        self.main.append_log("warning", "Sparse structure scan cancelled.", category="structure")
+
+    @Slot()
+    def _thread_finished(self) -> None:
+        self.thread = None
+        self.worker = None
+        self._set_busy(False)
+        if self._close_when_finished:
+            self.close()
+        self.main._check_close_after_workers()
+
+    def _export(self, selected_format: str) -> None:
+        if self._validated_summary is None or self._source_signature is None:
+            QMessageBox.information(self, self.main.t("structure_title"), self.main.t("structure_validation_required"))
+            return
+        if (self.export_thread is not None and self.export_thread.isRunning()) or (self.thread is not None and self.thread.isRunning()):
+            return
+        source = Path(self.input_edit.text().strip()).expanduser().resolve()
+        try:
+            if self._file_signature(source) != self._source_signature:
+                raise ValueError(self.main.t("structure_source_changed"))
+        except OSError as exc:
+            QMessageBox.warning(self, self.main.t("structure_title"), str(exc))
+            return
+        suffix = selected_format
+        default = f"{source.stem}-structure.{suffix}"
+        filename, _ = QFileDialog.getSaveFileName(
+            self, self.main.t("structure_export_json" if suffix == "json" else "structure_export_csv"),
+            default, "JSON (*.json)" if suffix == "json" else "CSV (*.csv)",
+        )
+        if not filename:
+            return
+        target = Path(filename).expanduser().resolve()
+        if target.suffix.casefold() != f".{suffix}":
+            target = target.with_suffix(f".{suffix}")
+        force = False
+        if target.exists():
+            answer = QMessageBox.question(
+                self, self.main.t("structure_title"), self.main.t("confirm_overwrite").format(path=target),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            force = True
+
+        self._export_target = target
+        self.progress.setValue(0)
+        self.page_label.setText(self.main.t("structure_export_progress").format(done=0, total=self._validated_summary.get("total_chunks", 0)))
+        self._set_busy(True)
+        worker = SparseStructureExportWorker(
+            source, target, suffix, self._validated_summary, self._source_signature, force
+        )
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._on_export_progress)
+        worker.succeeded.connect(self._on_export_succeeded)
+        worker.failed.connect(self._on_export_failed)
+        worker.cancelled.connect(self._on_export_cancelled)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._export_thread_finished)
+        self.export_worker = worker
+        self.export_thread = thread
+        thread.start()
+
+    @Slot(dict)
+    def _on_export_progress(self, data: dict[str, Any]) -> None:
+        done = int(data.get("chunks_exported", 0))
+        total = int(data.get("total_chunks", 0))
+        self.progress.setValue(max(0, min(100, int(data.get("percent", 0)))))
+        self.page_label.setText(self.main.t("structure_export_progress").format(done=done, total=total))
+
+    @Slot(dict)
+    def _on_export_succeeded(self, result: dict[str, Any]) -> None:
+        self.progress.setValue(100)
+        target = Path(str(result.get("output", self._export_target or "")))
+        self.main.append_log(
+            "success", f"Sparse structure exported: {target.name}", category="structure",
+            details={"format": result.get("format"), "chunks": result.get("chunks_exported")},
+        )
+        QMessageBox.information(
+            self, self.main.t("structure_title"),
+            f"{self.main.t('structure_export_success')}\n{target}",
+        )
+
+    @Slot(str)
+    def _on_export_failed(self, message: str) -> None:
+        self.main.append_log("error", f"Sparse structure export failed: {message}", category="structure")
+        QMessageBox.critical(
+            self, self.main.t("structure_title"),
+            f"{self.main.t('structure_export_error')}\n{friendly_error(message, self.main.language)}\n\n{message}",
+        )
+
+    @Slot()
+    def _on_export_cancelled(self) -> None:
+        self.main.append_log("warning", "Sparse structure export cancelled.", category="structure")
+        self.page_label.setText(self.main.t("structure_cancel"))
+
+    @Slot()
+    def _export_thread_finished(self) -> None:
+        self.export_thread = None
+        self.export_worker = None
+        self._set_busy(False)
+        if self._close_when_finished:
+            self.close()
+        self.main._check_close_after_workers()
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        scan_running = self.thread is not None and self.thread.isRunning()
+        export_running = self.export_thread is not None and self.export_thread.isRunning()
+        if scan_running or export_running:
+            self._close_when_finished = True
+            if self.worker is not None:
+                self.worker.request_cancel()
+            if self.export_worker is not None:
+                self.export_worker.request_cancel()
+            event.ignore()
+            return
+        event.accept()
+
+
 class AnalysisDialog(QDialog):
     def __init__(self, parent: "MainWindow", initial_path: str = "") -> None:
         super().__init__(parent); self.main = parent; self.result: dict[str, Any] | None = None
@@ -842,7 +1854,7 @@ class AnalysisDialog(QDialog):
         worker.succeeded.connect(self._success); worker.failed.connect(self._failure)
         thread = connect_worker(worker, self, self._thread_finished); self.thread = thread; thread.start()
     def _log(self, level: str, message: str) -> None:
-        self.output.append(f"[{level.upper()}] {message}")
+        self.output.append(f"[{level.upper()}] {localize_log_message(message, self.main.language)}")
         self.main.append_log(level, message, category="analysis")
     def _success(self, result: dict) -> None:
         self.result = result; self.progress.setValue(100); self.save_button.setEnabled(True)
@@ -1355,7 +2367,7 @@ class BatchQueueDialog(QDialog):
             self.main.settings.setValue("queue_output_dir", path)
 
     def _log(self, level: str, message: str) -> None:
-        self.log_view.append(f"[{level.upper()}] {message}")
+        self.log_view.append(f"[{level.upper()}] {localize_log_message(message, self.main.language)}")
         self.main.append_log(level, message, category="queue")
 
     def _item_started(self, task_id: str) -> None:
@@ -1638,7 +2650,7 @@ class MergeDialog(QDialog):
         worker.progress.connect(lambda d:self.progress.setValue(int(d.get("percent",0))))
         worker.log.connect(self._log); worker.succeeded.connect(self._success); worker.failed.connect(self._failure); worker.cancelled.connect(lambda:self._log("warning","Merge cancelled; staged output discarded."))
         thread=connect_worker(worker,self,self._thread_finished); self.thread=thread; thread.start()
-    def _log(self, level: str, message: str) -> None: self.log_view.append(f"[{level.upper()}] {message}"); self.main.append_log(level,message,category="merge")
+    def _log(self, level: str, message: str) -> None: self.log_view.append(f"[{level.upper()}] {localize_log_message(message, self.main.language)}"); self.main.append_log(level,message,category="merge")
     def _success(self,result:dict) -> None:
         self.result=result; self.progress.setValue(100); self.save_report.setEnabled(True); self.log_view.append("\n"+json.dumps(result,ensure_ascii=False,indent=2))
         self.main.record_operation_metrics("merge", "success", result.get("operation_metrics", {}), source=Path(str(result.get("output", "merge"))).name)
@@ -1671,7 +2683,7 @@ class MergeDialog(QDialog):
 class DiagnosticCenterDialog(QDialog):
     """Searchable diagnostic history with privacy-conscious ZIP export."""
     LEVELS = ("debug", "info", "success", "warning", "error")
-    CATEGORIES = ("application", "conversion", "analysis", "queue", "merge", "preflight", "verification", "diagnostics")
+    CATEGORIES = ("application", "conversion", "analysis", "queue", "merge", "preflight", "verification", "diagnostics", "structure")
 
     def __init__(self, parent: "MainWindow") -> None:
         super().__init__(parent)
@@ -1779,7 +2791,9 @@ class DiagnosticCenterDialog(QDialog):
         self.table.setRowCount(len(events))
         level_colors = {"success": COLORS["green"], "error": COLORS["red"], "warning": COLORS["amber"], "info": COLORS["cyan"], "debug": COLORS["muted"]}
         for row, event in enumerate(events):
-            values = (str(event.get("timestamp", "")), str(event.get("level", "")).upper(), str(event.get("category", "")), str(event.get("message", "")))
+            category = str(event.get("category", ""))
+            category_label = self.main.t(f"diagnostics_cat_{category}")
+            values = (str(event.get("timestamp", "")), str(event.get("level", "")).upper(), category_label, localize_log_message(str(event.get("message", "")), self.main.language))
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 item.setToolTip(value)
@@ -1856,7 +2870,14 @@ class MainWindow(QWidget):
         self._last_progress = {}; self.last_result: dict[str, Any] | None = None
         self._status_label = I18N[self.language]["status_idle"]; self._status_color = "muted"
         self._close_after_worker = False
-        self.setWindowTitle(APP_NAME); self.setWindowIcon(QIcon(str(resource_path("assets/sparse-to-raw.ico")))); self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
+        app_icon = QIcon(str(resource_path("assets/sparse-to-raw.ico")))
+        self.setWindowTitle(APP_NAME)
+        self.setWindowIcon(app_icon)
+        if app is not None:
+            app.setWindowIcon(app_icon)
+            if hasattr(app, "setApplicationDisplayName"):
+                app.setApplicationDisplayName(APP_NAME)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Window)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True); self.setAcceptDrops(True)
         self.setMinimumSize(1120, 760); self.resize(1420, 900)
         self._thread: QThread | None=None; self._worker: ConversionWorkerObject | None=None
@@ -1864,19 +2885,18 @@ class MainWindow(QWidget):
         self.icon_size = self.style().pixelMetric(QStyle.PixelMetric.PM_SmallIconSize) + 10
         self._build_ui(); self._apply_styles(); self.retranslate_ui(); self._restore_settings()
         self.append_log("info", "Interface ready. Choose an Android Sparse Image.")
-        self._update_shape_mask()
-
     def t(self,key:str) -> str: return I18N[self.language].get(key,key)
     def icon_for(self, standard_name: str) -> QIcon:
         attr = getattr(QStyle.StandardPixmap, standard_name, None)
         return self.style().standardIcon(attr) if attr is not None else QIcon()
 
     def _build_ui(self) -> None:
-        outer=QVBoxLayout(self); outer.setContentsMargins(70,8,68,22); outer.setSpacing(8)
+        outer=QVBoxLayout(self); outer.setContentsMargins(78,12,78,34); outer.setSpacing(8)
         self.header=HeaderBar(APP_VERSION,self); outer.addWidget(self.header)
         separator=QFrame(); separator.setObjectName("cyanSeparator"); separator.setFixedHeight(2); outer.addWidget(separator)
         toolbar=QHBoxLayout(); toolbar.setSpacing(7)
         self.analyze_button=QPushButton(); self.analyze_button.setIcon(self.icon_for("SP_FileDialogContentsView")); self.analyze_button.setIconSize(QSize(24,24)); self.analyze_button.clicked.connect(self._open_analysis); toolbar.addWidget(self.analyze_button)
+        self.structure_button=QPushButton(); self.structure_button.setIcon(self.icon_for("SP_FileDialogDetailedView")); self.structure_button.setIconSize(QSize(24,24)); self.structure_button.clicked.connect(self._open_structure); toolbar.addWidget(self.structure_button)
         self.queue_button=QPushButton(); self.queue_button.setIcon(self.icon_for("SP_FileDialogListView")); self.queue_button.setIconSize(QSize(24,24)); self.queue_button.clicked.connect(self._open_queue); toolbar.addWidget(self.queue_button)
         self.merge_button=QPushButton(); self.merge_button.setIcon(self.icon_for("SP_DirLinkIcon")); self.merge_button.setIconSize(QSize(24,24)); self.merge_button.clicked.connect(self._open_merge); toolbar.addWidget(self.merge_button)
         self.report_button=QPushButton(); self.report_button.setIcon(self.icon_for("SP_DialogSaveButton")); self.report_button.setIconSize(QSize(24,24)); self.report_button.clicked.connect(self._save_last_report); self.report_button.setEnabled(False); toolbar.addWidget(self.report_button)
@@ -1963,7 +2983,7 @@ class MainWindow(QWidget):
         self.verify_output_check.setToolTip(d["verify_output_tooltip"])
         self.progress_title.setText(d["progress"]); self.stats_title.setText(d["stats"]); self.chunks_label.setText(f"{d['chunks']}\n0 / —"); self.size_label.setText(f"{d['size']}\n0 B / —")
         self.log_title.setText(d["log"]); self.clear_log_button.setText(d["clear_log"])
-        self.analyze_button.setText(d["analyze"]); self.queue_button.setText(d["queue"]); self.merge_button.setText(d["merge"]); self.report_button.setText(d["save_report"]); self.diagnostics_button.setText(d["diagnostics_button"])
+        self.analyze_button.setText(d["analyze"]); self.structure_button.setText(d["structure_button"]); self.queue_button.setText(d["queue"]); self.merge_button.setText(d["merge"]); self.report_button.setText(d["save_report"]); self.diagnostics_button.setText(d["diagnostics_button"])
         self.recent_label.setText(d["recent"]); self.language_label.setText(d["language"])
         self._rebuild_recents()
         current=self.language_combo.findData(self.language)
@@ -1971,6 +2991,7 @@ class MainWindow(QWidget):
             self.language_combo.blockSignals(True); self.language_combo.setCurrentIndex(current); self.language_combo.blockSignals(False)
         self._update_speed_combo()
         self._set_status(d["status_idle"],"muted")
+        self._render_log_history()
 
     def _restore_settings(self) -> None:
         input_path=str(self.settings.value("last_input", "")); output_path=str(self.settings.value("last_output", ""))
@@ -2027,24 +3048,159 @@ class MainWindow(QWidget):
         path=self.recent_combo.itemData(index)
         if path and Path(str(path)).is_file(): self._set_source_path(str(path))
 
-    def _update_shape_mask(self) -> None:
-        w,h=self.width(),self.height()
-        from PySide6.QtGui import QPolygon
-        polygon=QPolygon([QPoint(60,0),QPoint(w-28,0),QPoint(w,18),QPoint(w-52,h-58),QPoint(w-20,h-22),QPoint(w-190,h),QPoint(58,h),QPoint(0,h-20),QPoint(36,int(h*.67)),QPoint(0,int(h*.47)),QPoint(35,int(h*.23))])
-        self.setMask(QRegion(polygon))
-    def resizeEvent(self,event) -> None:  # noqa: N802
-        self._update_shape_mask(); super().resizeEvent(event)
-    def paintEvent(self,event) -> None:  # noqa: N802
-        painter=QPainter(self); painter.setRenderHint(QPainter.RenderHint.Antialiasing); w,h=self.width(),self.height()
-        path=QPainterPath(); pts=[QPointF(60,3),QPointF(w-30,3),QPointF(w-3,19),QPointF(w-55,h-58),QPointF(w-24,h-23),QPointF(w-190,h-3),QPointF(58,h-3),QPointF(3,h-21),QPointF(37,h*.67),QPointF(3,h*.47),QPointF(35,h*.23)]
-        path.moveTo(pts[0]); [path.lineTo(pt) for pt in pts[1:]]; path.closeSubpath()
-        gradient=QLinearGradient(0,0,w,h); gradient.setColorAt(0,QColor("#0b1420")); gradient.setColorAt(.48,QColor("#07111b")); gradient.setColorAt(1,QColor("#101e2b"))
-        painter.fillPath(path,QBrush(gradient)); painter.setPen(QPen(QColor("#0c1721"),8)); painter.drawPath(path); painter.setPen(QPen(QColor(COLORS["yellow"]),3.2)); painter.drawPath(path)
-        inner=QPainterPath(); inner_pts=[QPointF(61,13),QPointF(w-40,13),QPointF(w-22,25),QPointF(w-47,h-80),QPointF(w-25,h-34),QPointF(w-160,h-19),QPointF(57,h-19),QPointF(37,h-31),QPointF(72,h*.68),QPointF(28,h*.47),QPointF(47,h*.24)]
-        inner.moveTo(inner_pts[0]); [inner.lineTo(pt) for pt in inner_pts[1:]]; inner.closeSubpath()
-        painter.setPen(QPen(QColor(255,225,123,120),1)); painter.setBrush(Qt.BrushStyle.NoBrush); painter.drawPath(inner)
-        painter.setPen(QPen(QColor(33,217,239,70),1)); painter.drawLine(QPointF(70,h*.31),QPointF(46,h*.38)); painter.drawLine(QPointF(46,h*.38),QPointF(46,h*.49)); painter.drawLine(QPointF(w-52,h*.33),QPointF(w-36,h*.38)); painter.drawLine(QPointF(w-36,h*.38),QPointF(w-48,h*.52))
-        painter.setPen(QPen(QColor(33,217,239,140),2)); painter.drawLine(QPointF(36,h*.47),QPointF(62,h*.47)); painter.drawLine(QPointF(w-60,h*.47),QPointF(w-38,h*.47))
+    @staticmethod
+    def _rounded_polygon_path(
+        points: list[QPointF], rounded_vertices: set[int], radius: float
+    ) -> QPainterPath:
+        """Keep a polygon's original silhouette while softly rounding selected corners."""
+        count = len(points)
+        path = QPainterPath()
+        if count < 3:
+            return path
+
+        def distance(first: QPointF, second: QPointF) -> float:
+            dx = second.x() - first.x()
+            dy = second.y() - first.y()
+            return (dx * dx + dy * dy) ** 0.5
+
+        def toward(vertex: QPointF, neighbor: QPointF, amount: float) -> QPointF:
+            length = distance(vertex, neighbor)
+            if length <= 1e-9:
+                return QPointF(vertex)
+            factor = min(1.0, amount / length)
+            return QPointF(
+                vertex.x() + (neighbor.x() - vertex.x()) * factor,
+                vertex.y() + (neighbor.y() - vertex.y()) * factor,
+            )
+
+        def corner_points(index: int) -> tuple[QPointF, QPointF]:
+            previous = points[(index - 1) % count]
+            vertex = points[index]
+            following = points[(index + 1) % count]
+            # A short radius softens the join without moving the adjoining edges.
+            cut = min(
+                radius,
+                distance(vertex, previous) * 0.22,
+                distance(vertex, following) * 0.22,
+            )
+            return toward(vertex, previous, cut), toward(vertex, following, cut)
+
+        if 0 in rounded_vertices:
+            first_start, first_end = corner_points(0)
+            path.moveTo(first_start)
+            path.quadTo(points[0], first_end)
+        else:
+            path.moveTo(points[0])
+
+        for index in range(1, count):
+            if index in rounded_vertices:
+                corner_start, corner_end = corner_points(index)
+                path.lineTo(corner_start)
+                path.quadTo(points[index], corner_end)
+            else:
+                path.lineTo(points[index])
+
+        path.closeSubpath()
+        return path
+
+    def _frame_paths(self) -> tuple[QPainterPath, QPainterPath]:
+        """Return the original angular shell, with only its left corners softened."""
+        w, h = float(self.width()), float(self.height())
+
+        # Preserve the pre-Stage-6 outer silhouette and coordinates. Only the
+        # left-side joins receive a small 8 px radius; the right/top/bottom
+        # geometry remains angular as in the previous application design.
+        outer_points = [
+            QPointF(60, 3),
+            QPointF(w - 30, 3),
+            QPointF(w - 3, 19),
+            QPointF(w - 55, h - 58),
+            QPointF(w - 24, h - 23),
+            QPointF(w - 190, h - 3),
+            QPointF(58, h - 3),
+            QPointF(3, h - 21),
+            QPointF(37, h * 0.67),
+            QPointF(3, h * 0.47),
+            QPointF(35, h * 0.23),
+        ]
+        left_corners = {0, 6, 7, 8, 9, 10}
+        outer = self._rounded_polygon_path(outer_points, left_corners, 8.0)
+
+        # Keep the original inset line, with a smaller radius to follow the
+        # outer contour without changing the visible frame thickness.
+        inner_points = [
+            QPointF(61, 13),
+            QPointF(w - 40, 13),
+            QPointF(w - 22, 25),
+            QPointF(w - 47, h - 80),
+            QPointF(w - 25, h - 34),
+            QPointF(w - 160, h - 19),
+            QPointF(57, h - 19),
+            QPointF(37, h - 31),
+            QPointF(72, h * 0.68),
+            QPointF(28, h * 0.47),
+            QPointF(47, h * 0.24),
+        ]
+        inner = self._rounded_polygon_path(inner_points, left_corners, 5.0)
+        return outer, inner
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        # Keep the widget unmasked so Qt can antialias the slanted outline.
+        # The original polygon layout margins keep child controls inside it.
+        super().resizeEvent(event)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        w, h = self.width(), self.height()
+        outer, inner = self._frame_paths()
+
+        gradient = QLinearGradient(0, 0, w, h)
+        gradient.setColorAt(0, QColor("#0b1420"))
+        gradient.setColorAt(0.48, QColor("#07111b"))
+        gradient.setColorAt(1, QColor("#101e2b"))
+        painter.fillPath(outer, QBrush(gradient))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+
+        # Keep all dark/secondary frame strokes strictly inside the yellow
+        # silhouette. A wide stroke centered on the outer path used to extend
+        # several pixels beyond the yellow contour near the lower-right bevel.
+        # Clipping it to the filled outer path preserves the dark inner edge
+        # while preventing any blue pixels from escaping past the yellow line.
+        painter.save()
+        painter.setClipPath(outer, Qt.ClipOperation.IntersectClip)
+        painter.setPen(QPen(
+            QColor("#0c1721"), 8.0, Qt.PenStyle.SolidLine,
+            Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.MiterJoin,
+        ))
+        painter.drawPath(outer)
+        painter.setPen(QPen(
+            QColor(255, 225, 123, 120), 1.0, Qt.PenStyle.SolidLine,
+            Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.MiterJoin,
+        ))
+        painter.drawPath(inner)
+        painter.restore()
+
+        # The yellow outline is the outermost visible frame edge.
+        painter.setPen(QPen(
+            QColor(COLORS["yellow"]), 3.2, Qt.PenStyle.SolidLine,
+            Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.MiterJoin,
+        ))
+        painter.drawPath(outer)
+
+        # Original cyan corner accents and center ticks are retained.
+        painter.setPen(QPen(QColor(33, 217, 239, 70), 1.0))
+        painter.drawLine(QPointF(70, h * 0.31), QPointF(46, h * 0.38))
+        painter.drawLine(QPointF(46, h * 0.38), QPointF(46, h * 0.49))
+        painter.drawLine(QPointF(w - 52, h * 0.33), QPointF(w - 36, h * 0.38))
+        painter.drawLine(QPointF(w - 36, h * 0.38), QPointF(w - 48, h * 0.52))
+        painter.setPen(QPen(
+            QColor(33, 217, 239, 140), 2.0,
+            Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
+        ))
+        painter.drawLine(QPointF(36, h * 0.47), QPointF(62, h * 0.47))
+        painter.drawLine(QPointF(w - 60, h * 0.47), QPointF(w - 38, h * 0.47))
 
     def _infer_log_category(self, message: str) -> str:
         text = str(message).casefold()
@@ -2062,21 +3218,42 @@ class MainWindow(QWidget):
             return "conversion"
         return "application"
 
-    def append_log(self, level: str, message: str, *, category: str | None = None, details: dict[str, Any] | None = None) -> None:
-        message = str(message)
-        timestamp = datetime.now().strftime("%H:%M:%S")
+    def _insert_log_line(self, level: str, message: str, timestamp: str) -> None:
         colors = {"success": COLORS["green"], "error": COLORS["red"], "warning": COLORS["amber"], "info": COLORS["cyan"], "debug": COLORS["muted"]}
-        replacements = {"Проверка заголовка": "Header validation", "Обработка чанков": "Processing chunks", "Преобразование завершено успешно": "Conversion completed successfully", "Открытие входного файла": "Opening input file", "Проверка общей контрольной суммы": "Image checksum validation", "Операция отменена пользователем": "Operation cancelled by user"}
-        if self.language == "en":
-            for ru, en in replacements.items():
-                message = message.replace(ru, en)
-        resolved_category = category or self._infer_log_category(message)
-        self.diagnostic_store.append(level, resolved_category, message, details)
-        cursor = self.log_view.textCursor(); cursor.movePosition(QTextCursor.MoveOperation.End)
+        cursor = self.log_view.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
         dot = QTextCharFormat(); dot.setForeground(QColor(colors.get(level, COLORS["text"])))
         timefmt = QTextCharFormat(); timefmt.setForeground(QColor(COLORS["muted"]))
         msgfmt = QTextCharFormat(); msgfmt.setForeground(QColor(COLORS["text"]))
-        cursor.insertText("● ", dot); cursor.insertText(f"[{timestamp}] ", timefmt); cursor.insertText(message, msgfmt); cursor.insertText("\n"); self.log_view.setTextCursor(cursor); self.log_view.ensureCursorVisible()
+        cursor.insertText("● ", dot)
+        cursor.insertText(f"[{timestamp}] ", timefmt)
+        cursor.insertText(localize_log_message(message, self.language), msgfmt)
+        cursor.insertText("\n")
+        self.log_view.setTextCursor(cursor)
+        self.log_view.ensureCursorVisible()
+
+    def _render_log_history(self) -> None:
+        if not hasattr(self, "log_view"):
+            return
+        self.log_view.clear()
+        events = self.diagnostic_store.entries()[-2500:]
+        for event in events:
+            try:
+                timestamp = datetime.fromisoformat(str(event.get("timestamp", ""))).strftime("%H:%M:%S")
+            except (ValueError, TypeError):
+                timestamp = "--:--:--"
+            self._insert_log_line(
+                str(event.get("level", "info")),
+                str(event.get("message", "")),
+                timestamp,
+            )
+
+    def append_log(self, level: str, message: str, *, category: str | None = None, details: dict[str, Any] | None = None) -> None:
+        original_message = str(message)
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        resolved_category = category or self._infer_log_category(original_message)
+        self.diagnostic_store.append(level, resolved_category, original_message, details)
+        self._insert_log_line(level, original_message, timestamp)
 
     def record_operation_metrics(self, category: str, status: str, metrics: dict[str, Any] | None, *, source: str = "", error: str = "") -> None:
         metrics = metrics or {}
@@ -2121,7 +3298,7 @@ class MainWindow(QWidget):
     def _set_busy(self,busy:bool) -> None:
         self.source_edit.setEnabled(not busy); self.output_edit.setEnabled(not busy); self.convert_button.setEnabled(not busy)
         self.source_browse_button.setEnabled(not busy); self.output_browse_button.setEnabled(not busy)
-        self.analyze_button.setEnabled(not busy); self.queue_button.setEnabled(not busy); self.merge_button.setEnabled(not busy); self.recent_combo.setEnabled(not busy)
+        self.analyze_button.setEnabled(not busy); self.structure_button.setEnabled(not busy); self.queue_button.setEnabled(not busy); self.merge_button.setEnabled(not busy); self.recent_combo.setEnabled(not busy)
         self.verify_output_check.setEnabled(not busy)
         self.cancel_button.setVisible(busy); self.cancel_button.setEnabled(busy and self._worker is not None)
 
@@ -2240,6 +3417,8 @@ class MainWindow(QWidget):
 
     def _open_analysis(self) -> None:
         dialog=AnalysisDialog(self,self.source_edit.text().strip()); dialog.show(); self._keep_dialog(dialog)
+    def _open_structure(self) -> None:
+        dialog=SparseStructureDialog(self,self.source_edit.text().strip()); dialog.show(); self._keep_dialog(dialog)
     def _open_queue(self) -> None:
         dialog=BatchQueueDialog(self); dialog.show(); self._keep_dialog(dialog)
     def _open_merge(self) -> None:
@@ -2280,6 +3459,7 @@ class MainWindow(QWidget):
 
 def main(argv:list[str]|None=None)->int:
     args=list(sys.argv[1:] if argv is None else argv)
+    set_windows_app_user_model_id()
     if "--self-test" in args:
         try:
             if QApplication.instance() is None: QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
