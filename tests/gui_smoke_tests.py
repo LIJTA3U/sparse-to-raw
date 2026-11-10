@@ -809,6 +809,15 @@ class SparseToRawGuiTests(unittest.TestCase):
             dialog.close()
             window.close()
 
+    def test_drop_zone_uses_large_vector_icon(self) -> None:
+        window = MainWindow()
+        try:
+            self.assertEqual(window.drop_zone.icon.width(), 72)
+            self.assertEqual(window.drop_zone.icon.height(), 72)
+            self.assertGreaterEqual(window.drop_zone.minimumHeight(), 96)
+        finally:
+            window.close()
+
     def test_bundled_self_test_entrypoint(self) -> None:
         # Reuse the existing QApplication so a GUI package can be smoke-tested headlessly.
         from sparse_to_raw_gui import main

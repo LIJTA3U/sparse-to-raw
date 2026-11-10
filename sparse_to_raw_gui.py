@@ -31,6 +31,7 @@ from PySide6.QtCore import QUrl
 import PySide6
 
 from diagnostics import DiagnosticStore, default_diagnostics_directory
+from qfil_xml import analyze_qfil_package, build_qfil_raw_images
 
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
@@ -53,7 +54,7 @@ from sparse_to_raw import (
     export_sparse_structure,
 )
 
-APP_VERSION = "v0.5.0"
+APP_VERSION = "v0.6.0-dev2"
 ORG_NAME = "LIJTA3U"
 APP_NAME = "sparse-to-raw"
 APP_USER_MODEL_ID = "LIJTA3U.sparse-to-raw"
@@ -779,21 +780,73 @@ class AngularButton(QPushButton):
         painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self.text())
 
 
+class DropZoneIcon(QWidget):
+    """Crisp, scalable file/download glyph for the main drag-and-drop area."""
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setFixedSize(72, 72)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(33, 217, 239, 13))
+        painter.drawEllipse(QRectF(3, 3, 66, 66))
+
+        # Document outline with a folded corner.
+        document = QPainterPath()
+        document.moveTo(21, 10)
+        document.lineTo(42, 10)
+        document.lineTo(54, 22)
+        document.lineTo(54, 57)
+        document.quadTo(54, 61, 50, 61)
+        document.lineTo(21, 61)
+        document.quadTo(17, 61, 17, 57)
+        document.lineTo(17, 14)
+        document.quadTo(17, 10, 21, 10)
+        document.closeSubpath()
+        painter.setBrush(QColor(9, 31, 43, 235))
+        painter.setPen(QPen(QColor(COLORS["cyan"]), 2.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        painter.drawPath(document)
+
+        fold = QPainterPath()
+        fold.moveTo(42, 11)
+        fold.lineTo(42, 20)
+        fold.quadTo(42, 22, 45, 22)
+        fold.lineTo(53, 22)
+        painter.setPen(QPen(QColor(COLORS["cyan"]), 2.1, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        painter.drawPath(fold)
+
+        # Down arrow and short tray line make the drop action obvious at 1x scale.
+        arrow = QPainterPath()
+        arrow.moveTo(35.5, 25)
+        arrow.lineTo(35.5, 45)
+        arrow.moveTo(27.5, 37)
+        arrow.lineTo(35.5, 45)
+        arrow.lineTo(43.5, 37)
+        painter.setPen(QPen(QColor(COLORS["yellow"]), 3.2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin))
+        painter.drawPath(arrow)
+        painter.setPen(QPen(QColor(COLORS["yellow"]), 2.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawLine(QPointF(26, 51), QPointF(45, 51))
+        painter.end()
+
+
 class DropZone(QFrame):
     fileDropped = Signal(str)
     browseRequested = Signal()
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setAcceptDrops(True); self.setObjectName("dropZone"); self.setMinimumHeight(78); self.setMaximumHeight(94)
+        self.setAcceptDrops(True); self.setObjectName("dropZone"); self.setMinimumHeight(96); self.setMaximumHeight(112)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        layout = QHBoxLayout(self); layout.setContentsMargins(14, 8, 14, 8); layout.setSpacing(12)
-        self.icon = QLabel("⇩"); self.icon.setAlignment(Qt.AlignmentFlag.AlignCenter); self.icon.setFixedWidth(60)
-        self.icon.setFont(QFont("Segoe UI Symbol", 34)); self.icon.setStyleSheet(f"color:{COLORS['cyan']};background:transparent")
-        layout.addWidget(self.icon)
-        labels = QVBoxLayout(); labels.setSpacing(2)
+        layout = QHBoxLayout(self); layout.setContentsMargins(16, 10, 18, 10); layout.setSpacing(16)
+        self.icon = DropZoneIcon(self)
+        layout.addWidget(self.icon, 0, Qt.AlignmentFlag.AlignVCenter)
+        labels = QVBoxLayout(); labels.setSpacing(3)
         self.title = QLabel(); self.title.setFont(QFont("Segoe UI", 14, QFont.Weight.DemiBold)); self.title.setStyleSheet(f"color:{COLORS['cyan']};background:transparent")
         self.subtitle = QLabel(); self.subtitle.setStyleSheet(f"color:{COLORS['muted']};background:transparent")
-        labels.addWidget(self.title); labels.addWidget(self.subtitle); layout.addLayout(labels, 1)
+        labels.addWidget(self.title); labels.addWidget(self.subtitle); labels.addStretch(1); layout.addLayout(labels, 1)
         self.setStyleSheet(f"QFrame#dropZone{{background:#07131d;border:1px dashed {COLORS['cyan']};border-radius:5px}}")
 
     def set_language(self, language: str) -> None:
@@ -1882,6 +1935,77 @@ class AnalysisDialog(QDialog):
         QMessageBox.information(self, self.main.t("report_saved"), path)
 
 
+class QFILDialog(QDialog):
+    """GUI for inspecting QFIL manifests and assembling RAW images; never flashes devices."""
+    def __init__(self, parent: "MainWindow") -> None:
+        super().__init__(parent)
+        self.main = parent
+        self.rawprograms: list[str] = []
+        self.patches: list[str] = []
+        self.setWindowTitle("QFIL XML — " + ("Manifest tools" if parent.language == "en" else "Работа с манифестами"))
+        self.resize(900, 680)
+        root = QVBoxLayout(self)
+        intro = QLabel("Inspect rawprogram/patch XML and reconstruct partition RAW images. Patch commands are reported, not executed. This tool does not flash devices." if parent.language == "en" else "Анализ rawprogram/patch XML и сборка RAW-образов разделов. Команды patch только анализируются и не выполняются. Программа не прошивает устройства.")
+        intro.setWordWrap(True); root.addWidget(intro)
+        self.raw_label = QLabel("Rawprogram XML: —"); root.addWidget(self.raw_label)
+        row = QHBoxLayout(); add_raw = QPushButton("Add rawprogram XML…" if parent.language == "en" else "Добавить rawprogram XML…")
+        add_raw.clicked.connect(self._add_raw); clear_raw = QPushButton("Clear" if parent.language == "en" else "Очистить"); clear_raw.clicked.connect(lambda: self._set_raw([])); row.addWidget(add_raw); row.addWidget(clear_raw); root.addLayout(row)
+        self.patch_label = QLabel("Patch XML: —"); root.addWidget(self.patch_label)
+        row = QHBoxLayout(); add_patch = QPushButton("Add patch XML…" if parent.language == "en" else "Добавить patch XML…"); add_patch.clicked.connect(self._add_patch); clear_patch = QPushButton("Clear" if parent.language == "en" else "Очистить"); clear_patch.clicked.connect(lambda: self._set_patch([])); row.addWidget(add_patch); row.addWidget(clear_patch); root.addLayout(row)
+        form = QFormLayout()
+        self.search_edit = QLineEdit(); self.search_edit.setPlaceholderText("Optional firmware folder" if parent.language == "en" else "Необязательная папка с прошивкой")
+        search_row = QHBoxLayout(); search_row.addWidget(self.search_edit, 1); browse_search = QPushButton("Browse…" if parent.language == "en" else "Обзор…"); browse_search.clicked.connect(self._browse_search); search_row.addWidget(browse_search); form.addRow("Search folder:" if parent.language == "en" else "Папка поиска:", search_row)
+        self.output_edit = QLineEdit(str(Path.home() / "qfil-raw-output")); output_row = QHBoxLayout(); output_row.addWidget(self.output_edit, 1); browse_out = QPushButton("Browse…" if parent.language == "en" else "Обзор…"); browse_out.clicked.connect(self._browse_output); output_row.addWidget(browse_out); form.addRow("Output folder:" if parent.language == "en" else "Папка результата:", output_row)
+        root.addLayout(form)
+        self.allow_overlap = QCheckBox("Allow overlapping program ranges (advanced)" if parent.language == "en" else "Разрешить пересекающиеся диапазоны (дополнительно)"); root.addWidget(self.allow_overlap)
+        actions = QHBoxLayout(); analyze = QPushButton("Analyze package" if parent.language == "en" else "Анализировать пакет"); analyze.clicked.connect(self._analyze); build = QPushButton("Build RAW images" if parent.language == "en" else "Собрать RAW-образы"); build.clicked.connect(self._build); actions.addWidget(analyze); actions.addWidget(build); root.addLayout(actions)
+        self.output = QTextEdit(); self.output.setReadOnly(True); self.output.setMinimumHeight(260); root.addWidget(self.output, 1)
+        close = QPushButton("Close" if parent.language == "en" else "Закрыть"); close.clicked.connect(self.close); root.addWidget(close)
+        self.setStyleSheet(f"QDialog{{background:{COLORS['background']};color:{COLORS['text']}}} QLineEdit,QTextEdit{{background:#07111b;color:{COLORS['text']};border:1px solid #29434f}} QPushButton{{background:#0a1b27;color:{COLORS['cyan']};border:1px solid #24505e;padding:6px}}")
+
+    def _set_raw(self, paths: list[str]) -> None:
+        self.rawprograms = paths; self.raw_label.setText(("Rawprogram XML: " if self.main.language == "en" else "Rawprogram XML: ") + ("; ".join(Path(x).name for x in paths) or "—"))
+    def _set_patch(self, paths: list[str]) -> None:
+        self.patches = paths; self.patch_label.setText(("Patch XML: " if self.main.language == "en" else "Patch XML: ") + ("; ".join(Path(x).name for x in paths) or "—"))
+    def _add_raw(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(self, "Rawprogram XML", str(Path.home()), "XML files (*.xml)")
+        if paths: self._set_raw(list(dict.fromkeys(self.rawprograms + paths)))
+    def _add_patch(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(self, "Patch XML", str(Path.home()), "XML files (*.xml)")
+        if paths: self._set_patch(list(dict.fromkeys(self.patches + paths)))
+    def _browse_search(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "Search folder", self.search_edit.text() or str(Path.home()))
+        if path: self.search_edit.setText(path)
+    def _browse_output(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "Output folder", self.output_edit.text() or str(Path.home()))
+        if path: self.output_edit.setText(path)
+    def _inputs(self) -> dict[str, Any]:
+        if not self.rawprograms: raise ValueError("Select at least one rawprogram XML file")
+        roots = [self.search_edit.text().strip()] if self.search_edit.text().strip() else []
+        return {"rawprogram_files": self.rawprograms, "patch_files": self.patches, "search_dirs": roots}
+    def _analyze(self) -> None:
+        try:
+            report = analyze_qfil_package(**self._inputs())
+            summary = report.get("summary", {})
+            lines = ["QFIL package analysis", json.dumps(summary, ensure_ascii=False, indent=2), "", "Programs:"]
+            for item in report.get("programs", []):
+                lines.append(f"LUN {item.get('physical_partition_number')} | {item.get('action')} | {item.get('filename') or '(no file)'} | {item.get('source_status')} | sector {item.get('start_sector')} + {item.get('num_partition_sectors')}")
+            if report.get("warnings"):
+                lines.extend(["", "Warnings:", *[f"• {x}" for x in report["warnings"]]])
+            self.output.setPlainText("\n".join(lines))
+        except Exception as exc:
+            QMessageBox.warning(self, "QFIL", f"{type(exc).__name__}: {exc}")
+    def _build(self) -> None:
+        try:
+            if not self.output_edit.text().strip(): raise ValueError("Select an output folder")
+            args = self._inputs()
+            result = build_qfil_raw_images(**args, output_dir=self.output_edit.text().strip(), force=False, allow_overlaps=self.allow_overlap.isChecked())
+            self.output.setPlainText(json.dumps(result, ensure_ascii=False, indent=2))
+            QMessageBox.information(self, "QFIL", "RAW image assembly completed." if self.main.language == "en" else "Сборка RAW-образов завершена.")
+        except Exception as exc:
+            QMessageBox.critical(self, "QFIL", f"{type(exc).__name__}: {exc}")
+
+
 class BatchQueueDialog(QDialog):
     """Interactive sequential queue with task-level control and status filtering."""
     ROLE_SOURCE = int(Qt.ItemDataRole.UserRole)
@@ -1949,6 +2073,7 @@ class BatchQueueDialog(QDialog):
         row = QHBoxLayout()
         self.queue_mutation_buttons: list[QPushButton] = []
         controls = [
+            (("QFIL XML tools" if parent.language == "en" else "Инструменты QFIL XML"), "SP_FileDialogContentsView", parent._open_qfil),
             (parent.t("queue_add"), "SP_DialogOpenButton", self._add_files),
             (parent.t("queue_remove"), "SP_TrashIcon", self._remove),
             (parent.t("queue_clear"), "SP_DialogResetButton", self._clear),
@@ -2895,6 +3020,7 @@ class MainWindow(QWidget):
         self.header=HeaderBar(APP_VERSION,self); outer.addWidget(self.header)
         separator=QFrame(); separator.setObjectName("cyanSeparator"); separator.setFixedHeight(2); outer.addWidget(separator)
         toolbar=QHBoxLayout(); toolbar.setSpacing(7)
+        self.qfil_button=QPushButton("QFIL XML"); self.qfil_button.clicked.connect(self._open_qfil); toolbar.addWidget(self.qfil_button)
         self.analyze_button=QPushButton(); self.analyze_button.setIcon(self.icon_for("SP_FileDialogContentsView")); self.analyze_button.setIconSize(QSize(24,24)); self.analyze_button.clicked.connect(self._open_analysis); toolbar.addWidget(self.analyze_button)
         self.structure_button=QPushButton(); self.structure_button.setIcon(self.icon_for("SP_FileDialogDetailedView")); self.structure_button.setIconSize(QSize(24,24)); self.structure_button.clicked.connect(self._open_structure); toolbar.addWidget(self.structure_button)
         self.queue_button=QPushButton(); self.queue_button.setIcon(self.icon_for("SP_FileDialogListView")); self.queue_button.setIconSize(QSize(24,24)); self.queue_button.clicked.connect(self._open_queue); toolbar.addWidget(self.queue_button)
@@ -3415,6 +3541,8 @@ class MainWindow(QWidget):
         dialog.show()
         self._keep_dialog(dialog)
 
+    def _open_qfil(self) -> None:
+        dialog=QFILDialog(self); dialog.show(); self._keep_dialog(dialog)
     def _open_analysis(self) -> None:
         dialog=AnalysisDialog(self,self.source_edit.text().strip()); dialog.show(); self._keep_dialog(dialog)
     def _open_structure(self) -> None:

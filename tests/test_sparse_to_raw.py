@@ -319,7 +319,7 @@ class SparseToRawTests(unittest.TestCase):
             with self.assertRaises(SystemExit) as raised:
                 main([str(self.input_path), "--info", "--verify-output"])
         self.assertEqual(raised.exception.code, 2)
-        self.assertIn("можно использовать только", stderr.getvalue())
+        self.assertIn("is only available", stderr.getvalue())
 
     def _write_discoverable_part(
         self,

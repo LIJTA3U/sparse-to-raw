@@ -1,12 +1,33 @@
+
+## v0.6.0-dev3 — QFIL GUI integration
+
+- Added a dedicated QFIL XML dialog to the main toolbar and Batch Queue window.
+- Added GUI workflows for selecting rawprogram/patch manifests, choosing a firmware search folder, analyzing partitions and warnings, and assembling RAW images per LUN.
+- Kept patch operations inspection-only; the application does not execute patch instructions or flash devices.
+- QFIL processing is currently a separate workflow and is not yet a task type in the Sparse conversion queue.
 # Changelog
 
 This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [Unreleased] — v0.6.0 development
+
+### Changed
+- Bumped the development build to `v0.6.0-dev2` after adding bilingual CLI localization.
+
+
+### Added
+- CLI localization: English by default, `--lang en|ru` per command, and `SPARSE_TO_RAW_LANG` shell default; Sparse and QFIL help, summaries, and common validation errors follow the selected language.
+- Qualcomm QFIL `rawprogram*.xml` / `patch*.xml` analysis, partition/LUN summaries, referenced-file discovery, and JSON reporting.
+- Streaming RAW assembly per physical partition, including `program`/`erase`, `file_sector_offset`, `SECTOR_SIZE_IN_BYTES`, Sparse sources, and `NUM_DISK_SECTORS-N` expressions.
+- Guards for ambiguous sources, overlapping ranges, XML DTD/entities, low disk space, and accidental overwrite. Patch XML is inspected but not applied.
+- Larger vector drag-and-drop icon and a clearer CLI summary/help layout.
+- Dedicated QFIL tests for XML parsing, file resolution, RAW assembly, failure cases, and CLI commands.
+
 
 ## [0.5.0] — 2026-11-02
 
 ### Added
+- CLI localization: English by default, `--lang en|ru` per command, and `SPARSE_TO_RAW_LANG` shell default; Sparse and QFIL help, summaries, and common validation errors follow the selected language.
 - Paged Sparse Structure Viewer with full validation before browsing, chunk offsets/sizes/checksums, type filters, search, and streaming CSV/JSON export.
 - Background cancellable structure export with atomic publication and source-file change detection.
 - Windows taskbar identity and application icon initialization for the running GUI.
@@ -30,6 +51,7 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.4.0] — released
 
 ### Added
+- CLI localization: English by default, `--lang en|ru` per command, and `SPARSE_TO_RAW_LANG` shell default; Sparse and QFIL help, summaries, and common validation errors follow the selected language.
 - Russian/English GUI language switching with saved preference.
 - Decimal MB/s, binary MiB/s, and Mbit/s speed display options.
 - Application icon and larger action icons.
@@ -48,6 +70,7 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.3.0] — released
 
 ### Added
+- CLI localization: English by default, `--lang en|ru` per command, and `SPARSE_TO_RAW_LANG` shell default; Sparse and QFIL help, summaries, and common validation errors follow the selected language.
 - Experimental PySide6 desktop GUI with a frameless geometric window.
 - Progress based on processed bytes and completed chunks, operation log, and SHA-256.
 - Background worker thread and safe cancellation through staging-file removal.
@@ -60,6 +83,7 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ## [0.2.0] — released
 
 ### Added
+- CLI localization: English by default, `--lang en|ru` per command, and `SPARSE_TO_RAW_LANG` shell default; Sparse and QFIL help, summaries, and common validation errors follow the selected language.
 - `--info` mode for metadata and verification without creating RAW output.
 - `--verify-only` mode for separate structure/checksum validation.
 - Protection against accidental overwrite; `--force` enables explicit replacement.

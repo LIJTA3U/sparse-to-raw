@@ -67,6 +67,9 @@ jobs:
       - name: Run diagnostic tests before packaging
         run: python -m unittest discover -s tests -p test_diagnostics.py -v
 
+      - name: Run QFIL XML tests before packaging
+        run: python -m unittest discover -s tests -p test_qfil_xml.py -v
+
       - name: Run GUI smoke tests before packaging
         env:
           QT_QPA_PLATFORM: offscreen

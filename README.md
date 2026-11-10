@@ -22,6 +22,7 @@ A streaming Android Sparse Image v1 inspector and converter that expands Sparse 
 - Optionally calculate SHA-256 over the logical RAW contents and export JSON reports.
 - Verify a completed RAW staging file by re-reading it and comparing its size and SHA-256 with the expected logical contents (`--verify-output`).
 - Merge independent Sparse images in an explicitly supplied order (`--merge-parts`).
+- Analyze Qualcomm QFIL `rawprogram*.xml` / `patch*.xml`, resolve referenced firmware files, summarize partitions, and assemble one RAW image per physical partition (`qfil-analyze`, `qfil-build`). Patch instructions are reported but not replayed.
 - Stream large images without loading the complete input or output into memory.
 - Use only the Python standard library for the CLI.
 - Provide a PySide6 GUI with Russian/English language selection, saved preferences, recent files, image analysis, sequential batch conversion, visual ordered merging, optional output verification, a searchable Diagnostic Center, and a paged Sparse Structure Viewer with streaming CSV/JSON export.
@@ -52,7 +53,7 @@ See the [GUI guide](docs/en/gui-guide.md) and [Windows installation guide](docs/
 
 ## Quick start (CLI)
 
-Python 3.10 or newer is required when running from source. The CLI has no third-party package dependencies.
+Python 3.10 or newer is required when running from source. The CLI has no third-party package dependencies. The CLI uses English by default; select Russian with `--lang ru` or `SPARSE_TO_RAW_LANG=ru`. See the [CLI guide](docs/en/cli-guide.md) for details.
 
 ```bash
 python sparse_to_raw.py input_sparse.img output_raw.img
@@ -91,12 +92,13 @@ py sparse_to_raw.py --merge-parts super.img_sparsechunk.0 super.img_sparsechunk.
 
 Each merge input must be a complete, independent Sparse image with its own header. This mode is not intended for arbitrary byte-level pieces cut from one Sparse file. The GUI can discover groups of `super.img_sparsechunk.*` files and sort their parts numerically. The CLI `--merge-parts` option continues to accept an explicitly ordered list of independent Sparse images.
 
-For all CLI options, examples, and exit behavior, see the [CLI guide](docs/en/cli-guide.md). The CLI also supports `--verify-output`, which re-reads the staged RAW result before it is committed.
+For Qualcomm manifests, see the [QFIL XML guide](docs/en/qfil-xml.md). For all CLI options, examples, and exit behavior, see the [CLI guide](docs/en/cli-guide.md). The CLI also supports `--verify-output`, which re-reads the staged RAW result before it is committed.
 
 ## Documentation
 
 - [Installation](docs/en/installation.md)
 - [CLI guide](docs/en/cli-guide.md)
+- [Qualcomm QFIL XML support](docs/en/qfil-xml.md)
 - [RAW output verification](docs/en/output-verification.md)
 - [GUI guide](docs/en/gui-guide.md)
 - [Task queue guide](docs/en/task-queue.md)
@@ -112,7 +114,7 @@ The [Russian README](README.ru.md) links to the Russian documentation in `docs/r
 
 ## Current development
 
-The v0.5.0 release includes automatic GUI discovery and numeric ordering of Sparse parts, preflight disk-space and path checks, optional read-back verification of completed RAW output, advanced batch-queue controls, the searchable Diagnostic Center, and the paged Sparse Structure Viewer. It also includes localized operation-log messages, a dedicated Windows taskbar identity and application icon, and a smoother version of the existing angular frame. See the [changelog](docs/en/changelog.md) for the complete release history. The earlier v0.4.0 release remains available on the [GitHub releases page](https://github.com/LIJTA3U/sparse-to-raw/releases/tag/v0.4.0).
+The v0.6.0-dev2 development build adds QFIL XML analysis and RAW assembly to the dependency-free CLI, improves the drop-zone icon, and presents a clearer CLI summary. The CLI language can now be selected with `--lang en|ru` (English is the default). The QFIL backend is now available in a dedicated GUI dialog from the main toolbar and from the Batch Queue window. The dialog supports manifest selection, optional firmware search folders, analysis, overlap review, and RAW assembly; QFIL jobs remain separate from the existing Sparse conversion queue in this development build. The v0.5.0 release includes automatic GUI discovery and numeric ordering of Sparse parts, preflight disk-space and path checks, optional read-back verification of completed RAW output, advanced batch-queue controls, the searchable Diagnostic Center, and the paged Sparse Structure Viewer. It also includes localized operation-log messages, a dedicated Windows taskbar identity and application icon, and a smoother version of the existing angular frame. See the [changelog](docs/en/changelog.md) for the complete release history. The earlier v0.4.0 release remains available on the [GitHub releases page](https://github.com/LIJTA3U/sparse-to-raw/releases/tag/v0.4.0).
 
 ## Tests
 

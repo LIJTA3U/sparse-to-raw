@@ -2,6 +2,18 @@
 
 Консольная утилита находится в файле `sparse_to_raw.py`. Она поддерживает Android Sparse Image v1 и использует только стандартную библиотеку Python.
 
+## Язык CLI
+
+По умолчанию CLI использует английский язык. Для отдельной команды укажите `--lang ru`; параметр `--lang en` явно включает английский. Переключатель работает с обычными командами Sparse и командами QFIL; в QFIL его можно поставить до или после подкоманды.
+
+```powershell
+py sparse_to_raw.py --help
+py sparse_to_raw.py --lang ru --help
+py sparse_to_raw.py qfil-analyze rawprogram0.xml --lang ru
+```
+
+Чтобы задать язык по умолчанию для текущего сеанса PowerShell, используйте `$env:SPARSE_TO_RAW_LANG = "ru"`. Явный параметр `--lang` имеет приоритет над переменной окружения. Поддерживаются значения `en` и `ru`.
+
 ## Обычная конвертация
 
 ```bash
@@ -74,6 +86,32 @@ python sparse_to_raw.py --merge-parts super.img_sparsechunk.0 super.img_sparsech
 
 Проверка добавляет полный проход чтения и увеличивает дисковую нагрузку и время операции. Она не заменяет проверку заголовков Sparse и контрольных сумм. При использовании `--json-report` объект `output_verification` содержит ожидаемый и фактический размеры и хеши, число проверенных байтов, длительность и результат. Параметр разрешён для обычной конвертации и `--merge-parts`, но не для `--info` или `--verify-only`. В опубликованной сборке v0.4.0 этого параметра ещё нет.
 
+## Манифесты Qualcomm QFIL
+
+Анализ манифестов и поиск файлов прошивки:
+
+```bat
+py sparse_to_raw.py qfil-analyze rawprogram0.xml --patch-xml patch0.xml --search-dir . --json-report qfil-analysis.json
+```
+
+Сборка отдельного RAW-образа для каждой физической партиции/LUN:
+
+```bat
+py sparse_to_raw.py qfil-build rawprogram0.xml --patch-xml patch0.xml --search-dir . --output-dir raw-output --json-report qfil-build.json
+```
+
+Передавайте несколько rawprogram-манифестов позиционными аргументами; `--patch-xml` и `--search-dir` можно повторять. Сначала файлы ищутся относительно XML, затем папка манифеста и выбранные каталоги рекурсивно сканируются. При нескольких совпадениях сборка останавливается, не выбирая файл наугад.
+
+Сборщик поддерживает операции `<program>` и `<erase>`, размер сектора, смещение файла в секторах, номер физической партиции, обычные RAW-файлы и источники с `sparse="true"`. Sparse-данные проверяются и раскрываются непосредственно во временный итоговый образ. Диапазоны `DONT_CARE` и erase заполняются нулями. Patch XML включается в отчёт, но не применяется.
+
+Для координат вида `NUM_DISK_SECTORS-33` укажите размер накопителя в секторах для нужного LUN:
+
+```bat
+py sparse_to_raw.py qfil-build rawprogram0.xml --search-dir . --output-dir raw-output --disk-sectors 0=61071360
+```
+
+Пересекающиеся диапазоны по умолчанию запрещены; параметр `--allow-overlap` разрешает их только после проверки манифеста. Для замены существующих RAW-файлов или JSON-отчётов требуется `--force`. Подробное описание ограничений и мер безопасности находится в [руководстве QFIL XML](qfil-xml.md).
+
 ## Отключение индикатора прогресса
 
 ```bash
@@ -83,10 +121,12 @@ python sparse_to_raw.py super.img super_raw.img --quiet
 ## Параметры
 
 ```text
-usage: sparse_to_raw.py [-h] [--merge-parts SPARSE_FILE [SPARSE_FILE ...]]
+usage: sparse_to_raw.py [-h] [--lang {en,ru}] [--version] [--merge-parts SPARSE_FILE ...]
                         [--output FILE] [--info | --verify-only] [--force]
                         [--sha256] [--verify-output] [--json-report FILE] [--quiet]
                         [input_sparse] [output_raw]
+
+Команды QFIL: qfil-analyze RAWPROGRAM.XML ... | qfil-build RAWPROGRAM.XML ... --output-dir DIR
 ```
 
 | Параметр | Описание |
@@ -102,5 +142,7 @@ usage: sparse_to_raw.py [-h] [--merge-parts SPARSE_FILE [SPARSE_FILE ...]]
 | `--verify-output` | Повторно прочитать временный RAW и проверить размер и SHA-256 перед сохранением (ветка разработки) |
 | `--json-report FILE` | Сохранить JSON-отчёт |
 | `--quiet` | Скрыть индикатор прогресса |
+| `--version` | Показать версию CLI |
+| `--lang {en,ru}` | Выбрать язык CLI; по умолчанию используется английский |
 
 Полный текст справки доступен через `python sparse_to_raw.py --help`.

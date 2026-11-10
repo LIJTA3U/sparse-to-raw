@@ -17,6 +17,8 @@ import zlib
 from pathlib import Path
 from typing import BinaryIO, Any, Callable
 
+from cli_i18n import set_language, tr, localize_error
+
 MAGIC = 0xED26FF3A
 CHUNK_RAW = 0xCAC1
 CHUNK_FILL = 0xCAC2
@@ -261,6 +263,8 @@ def _process_sparse(
     progress_callback: ProgressCallback | None = None,
     event_callback: EventCallback | None = None,
     cancel_requested: CancelCallback | None = None,
+    _output_stream: BinaryIO | None = None,
+    _output_offset: int = 0,
 ) -> dict[str, Any]:
     """Validate an Android sparse image and optionally expand it to a raw image.
 
@@ -275,7 +279,17 @@ def _process_sparse(
 
     if verify_output and output_path is None:
         raise ValueError("RAW output verification requires an output path")
+    if _output_stream is not None:
+        if output_path is not None:
+            raise ValueError("A destination path and an external output stream cannot be used together")
+        if mode != "convert" or verify_output:
+            raise ValueError("External output streams are supported only for unverified conversion")
+        if _output_offset < 0:
+            raise ValueError("External output offset cannot be negative")
+        if not _output_stream.seekable() or not _output_stream.writable():
+            raise ValueError("External output stream must be seekable and writable")
 
+    external_output = _output_stream is not None
     destination: Path | None = None
     if output_path is not None:
         destination = Path(output_path).expanduser().resolve()
@@ -430,6 +444,9 @@ def _process_sparse(
                 temp_path = Path(temporary_name)
                 output_stream = os.fdopen(temp_fd, "wb")
                 temp_fd = None
+            elif _output_stream is not None:
+                output_stream = _output_stream
+                output_stream.seek(_output_offset)
 
             running_crc = 0
             output_blocks = 0
@@ -541,12 +558,16 @@ def _process_sparse(
                 )
 
             if output_stream is not None:
-                # Extends trailing DONT_CARE ranges and zero-sized images correctly.
-                output_stream.truncate(raw_size)
-                output_stream.flush()
-                os.fsync(output_stream.fileno())
-                output_stream.close()
-                output_stream = None
+                if temp_path is not None:
+                    # Extends trailing DONT_CARE ranges and zero-sized images correctly.
+                    output_stream.truncate(raw_size)
+                    output_stream.flush()
+                    os.fsync(output_stream.fileno())
+                    output_stream.close()
+                    output_stream = None
+                elif external_output:
+                    # The caller pre-sized its staging image; DONT_CARE ranges remain zero-filled holes.
+                    output_stream.flush()
 
             if temp_path is not None:
                 actual_temp_size = temp_path.stat().st_size
@@ -681,13 +702,15 @@ def _process_sparse(
                     file=sys.stderr,
                 )
             notify("success", f"Результат сохранён: {destination}")
+        elif external_output:
+            notify("success", f"Sparse-данные записаны в поток: {_format_size(raw_size)}.")
         elif destination is None:
             notify("success", "Проверка образа завершена успешно; выходной файл не создавался.")
 
         emit_progress(force=True, completed=True)
         return result
     finally:
-        if output_stream is not None:
+        if output_stream is not None and not external_output:
             try:
                 output_stream.close()
             except OSError:
@@ -702,6 +725,32 @@ def _process_sparse(
                 temp_path.unlink(missing_ok=True)
             except OSError:
                 pass
+
+
+def write_sparse_to_stream(
+    input_path: str | Path,
+    output_stream: BinaryIO,
+    output_offset: int,
+    *,
+    progress_callback: ProgressCallback | None = None,
+    event_callback: EventCallback | None = None,
+    cancel_requested: CancelCallback | None = None,
+) -> dict[str, Any]:
+    """Validate and expand Sparse contents directly into a caller-owned RAW stream.
+
+    The caller must prepare a zero-initialized, seekable staging stream large enough
+    for ``output_offset + raw_size``. The stream remains open after the call.
+    """
+    return _process_sparse(
+        input_path,
+        None,
+        mode="convert",
+        progress_callback=progress_callback,
+        event_callback=event_callback,
+        cancel_requested=cancel_requested,
+        _output_stream=output_stream,
+        _output_offset=output_offset,
+    )
 
 
 def convert_sparse_to_raw(
@@ -1780,110 +1829,144 @@ def merge_sparse_to_raw(
                 pass
 
 def print_summary(result: dict[str, Any], *, verbose: bool) -> None:
-    """Print a human-readable verification/conversion summary."""
+    """Print a compact, aligned CLI result summary."""
+    print("\n" + tr("summary_title"))
+    print("=" * 52)
+
+    def field(label: str, value: Any) -> None:
+        print(f"{label:<17}: {value}")
+
+    field("Input", result["input"])
     if verbose:
-        print(f"Input            : {result['input']}")
-        print(f"Format           : {result['format']}")
-        print(f"Block size       : {result['block_size']} bytes")
-        print(f"Total blocks     : {result['total_blocks']:,}")
-        print(f"Total chunks     : {result['total_chunks']:,}")
-        print(f"RAW size         : {result['raw_size_human']}")
-        print("Chunk breakdown  : " + ", ".join(
+        field("Format", result["format"])
+        block_size = result.get("block_size")
+        field(tr("block_size"), f"{block_size:,} bytes" if block_size is not None else "varies by input")
+        field(tr("total_blocks"), f"{result['total_blocks']:,}")
+        field(tr("total_chunks"), f"{result['total_chunks']:,}")
+        field(tr("raw_size"), result["raw_size_human"])
+        field(tr("breakdown"), ", ".join(
             f"{name}={count}" for name, count in result["chunk_counts"].items()
         ))
-        print(f"Header checksum  : {result['header_checksum']}")
+        field(tr("header_crc"), result["header_checksum"])
     else:
-        print(f"Input: {result['input']}")
-        print(f"RAW size: {result['raw_size_human']}")
-        print(f"Chunks validated: {result['total_chunks']:,}")
+        field(tr("raw_size"), result["raw_size_human"])
+        field(tr("chunks_checked"), f"{result['total_chunks']:,}")
 
-    print(f"Computed CRC32   : {result['computed_crc32']}")
+    field(tr("computed_crc"), result["computed_crc32"])
     if "sha256" in result:
-        print(f"RAW SHA-256      : {result['sha256']}")
+        field("RAW SHA-256", result["sha256"])
     verification = result.get("output_verification")
     if verification and verification.get("passed"):
-        print(f"RAW verification : PASSED ({_format_size(verification['verified_bytes'])} re-read)")
-        print(f"Verified SHA-256 : {verification['actual_sha256']}")
+        field(tr("verification"), f"PASSED ({_format_size(verification['verified_bytes'])} re-read)")
+        field(tr("verified_sha"), verification["actual_sha256"])
     if result.get("output"):
-        print(f"Output           : {result['output']}")
+        field("Output", result["output"])
     preflight = result.get("preflight")
     if preflight:
-        print(
-            "Preflight space  : "
+        field(
+            "Disk space",
             f"{_format_size(preflight['available_free_bytes'])} free / "
-            f"{_format_size(preflight['required_free_bytes'])} required"
+            f"{_format_size(preflight['required_free_bytes'])} required",
         )
-    print("Validation successful.")
+    print("-" * 52)
+    print(tr("success"))
 
 
 def build_argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Конвертация и проверка Android Sparse Image без сторонних библиотек.",
-        epilog=(
-            "По умолчанию существующие файлы не перезаписываются. "
-            "Для явной перезаписи используйте --force."
-        ),
+        description=tr("description"),
+        epilog=tr("epilog"),
+        formatter_class=argparse.RawTextHelpFormatter,
     )
-    parser.add_argument("input_sparse", nargs="?", help="исходный Android Sparse Image")
-    parser.add_argument("output_raw", nargs="?", help="путь к выходному RAW-образу")
+    parser.add_argument("--lang", choices=("en", "ru"), default=None, help=tr("lang"))
+    parser.add_argument("--version", action="version", version="sparse-to-raw v0.6.0-dev2")
+    parser.add_argument("input_sparse", nargs="?", help=tr("input"))
+    parser.add_argument("output_raw", nargs="?", help=tr("output_pos"))
     parser.add_argument(
-        "--merge-parts", nargs="+", metavar="SPARSE_FILE",
-        help="объединить 2+ независимых Sparse-файла в указанном порядке (нужен --output)",
+        "--merge-parts", nargs="+", metavar="SPARSE_FILE", help=tr("merge"),
     )
-    parser.add_argument("--output", dest="merge_output", metavar="FILE", help="RAW-файл для режима --merge-parts")
+    parser.add_argument("--output", dest="merge_output", metavar="FILE", help=tr("output"))
     modes = parser.add_mutually_exclusive_group()
-    modes.add_argument("--info", action="store_true", help="проверить образ и вывести подробную информацию без конвертации")
-    modes.add_argument("--verify-only", action="store_true", help="проверить структуру и контрольные суммы без создания RAW-файла")
-    parser.add_argument("--force", action="store_true", help="разрешить перезапись существующего выходного файла или отчёта")
-    parser.add_argument("--sha256", action="store_true", help="вычислить SHA-256 логического RAW-содержимого")
-    parser.add_argument("--verify-output", action="store_true", help="повторно прочитать готовый RAW и сверить размер и SHA-256 перед сохранением")
-    parser.add_argument("--json-report", metavar="FILE", help="сохранить результаты в JSON-файл")
-    parser.add_argument("--quiet", action="store_true", help="не показывать индикатор прогресса")
+    modes.add_argument("--info", action="store_true", help=tr("info"))
+    modes.add_argument("--verify-only", action="store_true", help=tr("verify"))
+    parser.add_argument("--force", action="store_true", help=tr("force"))
+    parser.add_argument("--sha256", action="store_true", help=tr("sha"))
+    parser.add_argument("--verify-output", action="store_true", help=tr("verifyout"))
+    parser.add_argument("--json-report", metavar="FILE", help=tr("json"))
+    parser.add_argument("--quiet", action="store_true", help=tr("quiet"))
     return parser
 
-
 def main(argv: list[str] | None = None) -> int:
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    # Accept --lang in any position, including before or after a QFIL subcommand.
+    selected_language = None
+    filtered: list[str] = []
+    index = 0
+    while index < len(arguments):
+        token = arguments[index]
+        if token == "--lang":
+            if index + 1 >= len(arguments):
+                print("ERROR: --lang requires en or ru", file=sys.stderr)
+                return 2
+            selected_language = arguments[index + 1]
+            index += 2
+            continue
+        if token.startswith("--lang="):
+            selected_language = token.split("=", 1)[1]
+            index += 1
+            continue
+        filtered.append(token)
+        index += 1
+    if selected_language not in (None, "en", "ru"):
+        print("ERROR: --lang must be en or ru", file=sys.stderr)
+        return 2
+    set_language(selected_language)
+    arguments = filtered
+    if arguments and arguments[0] in {"qfil-analyze", "qfil-build"}:
+        from qfil_xml import run_qfil_cli
+        return run_qfil_cli(arguments[0], arguments[1:])
+
     parser = build_argument_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(arguments)
     mode = "info" if args.info else "verify" if args.verify_only else "convert"
     merging = bool(args.merge_parts)
 
     if merging:
         if args.input_sparse or args.output_raw:
-            parser.error("в режиме --merge-parts используйте только --output, без позиционных аргументов")
+            parser.error(tr("merge_pos"))
         if not args.merge_output:
-            parser.error("для --merge-parts обязательно укажите --output FILE")
+            parser.error(tr("merge_need"))
         if mode != "convert":
-            parser.error("--merge-parts нельзя совмещать с --info или --verify-only")
+            parser.error(tr("merge_mode"))
     else:
         if not args.input_sparse:
-            parser.error("укажите input_sparse либо используйте --merge-parts")
+            parser.error(tr("need_input"))
         if args.merge_output:
-            parser.error("--output используется только вместе с --merge-parts")
+            parser.error(tr("output_only_merge"))
         if mode == "convert" and not args.output_raw:
-            parser.error("для конвертации нужно указать output_raw; для проверки используйте --info или --verify-only")
+            parser.error(tr("need_output"))
         if mode != "convert" and args.output_raw:
-            parser.error("не указывайте output_raw вместе с --info или --verify-only")
+            parser.error(tr("no_output"))
 
     output_arg = args.merge_output if merging else args.output_raw
     input_args = args.merge_parts if merging else [args.input_sparse]
     if args.verify_output and mode != "convert":
-        parser.error("--verify-output можно использовать только при конвертации или --merge-parts")
+        parser.error(tr("verify_mode"))
     report_path: Path | None = None
     if args.json_report:
         report_path = Path(args.json_report).expanduser().resolve()
         resolved_inputs = {Path(item).expanduser().resolve() for item in input_args}
         output_resolved = Path(output_arg).expanduser().resolve() if output_arg else None
         if report_path in resolved_inputs or report_path == output_resolved:
-            parser.error("JSON-отчёт не может совпадать с путём входного или выходного образа")
+            parser.error(tr("json_collision"))
         if not report_path.parent.is_dir():
-            print(f"ERROR: Каталог для JSON-отчёта не найден: {report_path.parent}", file=sys.stderr)
+            print(f"{tr('error')}: {tr('json_dir')}: {report_path.parent}", file=sys.stderr)
             return 2
         if report_path.is_dir():
-            print(f"ERROR: Путь JSON-отчёта указывает на каталог: {report_path}", file=sys.stderr)
+            print(f"{tr('error')}: {tr('json_is_dir')}: {report_path}", file=sys.stderr)
             return 2
         if report_path.exists() and not args.force:
-            print(f"ERROR: Файл отчёта уже существует: {report_path} (используйте --force)", file=sys.stderr)
+            print(f"{tr('error')}: {tr('json_exists')}: {report_path}", file=sys.stderr)
             return 2
 
     try:
@@ -1919,9 +2002,9 @@ def main(argv: list[str] | None = None) -> int:
                 json.dumps(result, ensure_ascii=False, indent=2) + "\n",
                 force=args.force,
             )
-            print(f"JSON report saved: {report_path}")
+            print(f"{tr('json_saved')}: {report_path}")
     except (OSError, ValueError, struct.error) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        print(f"{tr('error')}: {localize_error(str(exc))}", file=sys.stderr)
         return 2
     return 0
 

@@ -17,4 +17,6 @@ Common pages:
 - [Центр диагностики (RU)](ru/diagnostic-center.md)
 - [Sparse Structure Viewer (EN)](en/sparse-structure-viewer.md)
 - [Просмотр структуры Sparse (RU)](ru/sparse-structure-viewer.md)
+- [Qualcomm QFIL XML support (EN)](en/qfil-xml.md)
+- [Поддержка XML Qualcomm QFIL (RU)](ru/qfil-xml.md)
 - [Screenshots / Скриншоты](screenshots/)
