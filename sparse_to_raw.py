@@ -1879,7 +1879,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument("--lang", choices=("en", "ru"), default=None, help=tr("lang"))
-    parser.add_argument("--version", action="version", version="sparse-to-raw v0.6.0-dev6")
+    parser.add_argument("--version", action="version", version="sparse-to-raw v0.6.0-dev7")
     parser.add_argument("input_sparse", nargs="?", help=tr("input"))
     parser.add_argument("output_raw", nargs="?", help=tr("output_pos"))
     parser.add_argument(
@@ -1925,6 +1925,38 @@ def main(argv: list[str] | None = None) -> int:
     if arguments and arguments[0] in {"qfil-analyze", "qfil-build"}:
         from qfil_xml import run_qfil_cli
         return run_qfil_cli(arguments[0], arguments[1:])
+    if arguments and arguments[0] == "raw-to-sparse":
+        from raw_to_sparse import raw_to_sparse
+        command = argparse.ArgumentParser(prog="sparse-to-raw raw-to-sparse", description="Convert RAW image to Android Sparse")
+        command.add_argument("input_raw")
+        command.add_argument("output_sparse")
+        command.add_argument("--block-size", type=int, default=4096, help="Sparse block size in bytes (default: 4096; multiple of 4)")
+        command.add_argument("--force", action="store_true", help="overwrite existing output")
+        command.add_argument("--sha256", action="store_true", help="calculate RAW SHA-256")
+        command.add_argument("--quiet", action="store_true", help="hide progress")
+        command.add_argument("--json-report")
+        opts = command.parse_args(arguments[1:])
+        try:
+            report_path = Path(opts.json_report).expanduser().resolve() if opts.json_report else None
+            if report_path and report_path in {Path(opts.input_raw).expanduser().resolve(), Path(opts.output_sparse).expanduser().resolve()}:
+                command.error("JSON report path must differ from input and output files")
+            if report_path and not report_path.parent.is_dir():
+                command.error(f"JSON report directory not found: {report_path.parent}")
+            def show_raw_sparse_progress(item):
+                if not opts.quiet and item.get("stage") == "encoding":
+                    print(f"\rProgress: {item['percent']:6.2f}% | {item['completed_blocks']:,}/{item['total_blocks']:,} blocks", end="", file=sys.stderr, flush=True)
+            result = raw_to_sparse(opts.input_raw, opts.output_sparse, block_size=opts.block_size,
+                                   force=opts.force, calculate_sha256=opts.sha256,
+                                   progress_callback=show_raw_sparse_progress)
+            if not opts.quiet:
+                print(file=sys.stderr)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            if report_path:
+                _atomic_write_text(report_path, json.dumps(result, ensure_ascii=False, indent=2)+"\n", force=opts.force)
+            return 0
+        except (OSError, ValueError, InterruptedError) as exc:
+            print(f"{tr('error')}: {localize_error(str(exc))}", file=sys.stderr)
+            return 2
 
     parser = build_argument_parser()
     args = parser.parse_args(arguments)

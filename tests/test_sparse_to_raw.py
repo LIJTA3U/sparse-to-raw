@@ -71,7 +71,7 @@ class SparseToRawTests(unittest.TestCase):
         with redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
             main(["--version"])
         self.assertEqual(raised.exception.code, 0)
-        self.assertIn("v0.6.0-dev6", stdout.getvalue())
+        self.assertIn("v0.6.0-dev7", stdout.getvalue())
 
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()

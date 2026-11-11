@@ -27,3 +27,10 @@ The maintained change history is available in both languages:
 ## v0.6.0-dev3
 
 Added a dedicated QFIL XML GUI workflow accessible from the main toolbar and Batch Queue window. QFIL processing remains separate from the Sparse conversion queue.
+
+
+## v0.6.0-dev7
+
+- Added streaming RAW → Android Sparse v1.0 encoding in the standard-library CLI.
+- Added configurable block size, `RAW`/`FILL`/`DONT_CARE` chunk selection, CRC32, optional SHA-256, atomic output and JSON summary.
+- Added RAW → Sparse round-trip and validation tests.

@@ -143,3 +143,14 @@ The core suite covers chunk types, checksums, malformed and truncated data, safe
 ## License
 
 [MIT](LICENSE).
+
+
+## RAW → Android Sparse
+
+The dependency-free CLI can encode a RAW image as Android Sparse v1.0 using bounded-memory streaming. It detects zero blocks and writes `DONT_CARE` chunks, detects repeated 4-byte patterns and writes `FILL` chunks, and stores other data in `RAW` chunks. The block size is configurable (default 4096 bytes; must be a multiple of 4). Input size must be non-zero and divisible by the selected block size.
+
+```bash
+python sparse_to_raw.py raw-to-sparse system.raw system.sparse --block-size 4096 --sha256
+```
+
+Use `--force` to replace an existing output and `--json-report report.json` to save a machine-readable summary. The operation writes to a temporary file and only commits the finished Sparse image after successful encoding.
