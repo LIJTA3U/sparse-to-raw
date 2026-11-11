@@ -54,7 +54,7 @@ from sparse_to_raw import (
     export_sparse_structure,
 )
 
-APP_VERSION = "v0.6.0-dev5"
+APP_VERSION = "v0.6.0-dev6"
 ORG_NAME = "LIJTA3U"
 APP_NAME = "sparse-to-raw"
 APP_USER_MODEL_ID = "LIJTA3U.sparse-to-raw"

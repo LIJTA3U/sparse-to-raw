@@ -1879,7 +1879,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument("--lang", choices=("en", "ru"), default=None, help=tr("lang"))
-    parser.add_argument("--version", action="version", version="sparse-to-raw v0.6.0-dev2")
+    parser.add_argument("--version", action="version", version="sparse-to-raw v0.6.0-dev6")
     parser.add_argument("input_sparse", nargs="?", help=tr("input"))
     parser.add_argument("output_raw", nargs="?", help=tr("output_pos"))
     parser.add_argument(

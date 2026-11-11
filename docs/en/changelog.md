@@ -1,3 +1,12 @@
+## v0.6.0-dev6 — regression stabilization
+
+### Fixed
+- Synchronized the CLI `--version` output with the GUI/application version. The CLI previously reported an older development build even when the GUI showed a newer one.
+
+### Tests
+- Added a regression test that checks the CLI version string.
+- Re-ran the full dependency-free unit test suite; GUI smoke tests remain a separate PySide6-enabled check.
+
 ## v0.6.0-dev5 — toolbar layout refinement
 
 ### Changed

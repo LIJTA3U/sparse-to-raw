@@ -66,6 +66,13 @@ def make_sparse(chunks: list[bytes], raw_bytes: bytes, image_checksum: int | Non
 
 
 class SparseToRawTests(unittest.TestCase):
+    def test_cli_version_matches_current_development_build(self) -> None:
+        stdout = StringIO()
+        with redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
+            main(["--version"])
+        self.assertEqual(raised.exception.code, 0)
+        self.assertIn("v0.6.0-dev6", stdout.getvalue())
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.root = Path(self.temp_dir.name)
