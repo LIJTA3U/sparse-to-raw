@@ -25,7 +25,7 @@ from typing import Any
 from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, QSize, QSettings, QStandardPaths, Qt, QThread, Signal, Slot, qVersion
 from PySide6.QtGui import (
     QBrush, QColor, QFont, QIcon, QLinearGradient, QPainter, QPainterPath,
-    QPen, QTextCharFormat, QTextCursor,
+    QPen, QTextCharFormat, QTextCursor, QPixmap,
 )
 from PySide6.QtCore import QUrl
 import PySide6
@@ -54,7 +54,7 @@ from sparse_to_raw import (
     export_sparse_structure,
 )
 
-APP_VERSION = "v0.6.0-dev2"
+APP_VERSION = "v0.6.0-dev5"
 ORG_NAME = "LIJTA3U"
 APP_NAME = "sparse-to-raw"
 APP_USER_MODEL_ID = "LIJTA3U.sparse-to-raw"
@@ -958,12 +958,14 @@ class BatchWorkerObject(QObject):
     finished = Signal()
 
     def __init__(self, sources: list[Path], output_dir: Path, overwrite: bool,
-                 verify_output: bool = False, task_ids: list[str] | None = None) -> None:
+                 verify_output: bool = False, task_ids: list[str] | None = None,
+                 qfil_configs: dict[str, dict[str, Any]] | None = None) -> None:
         super().__init__()
         self.sources = list(sources)
         self.output_dir = output_dir
         self.overwrite = overwrite
         self.verify_output = bool(verify_output)
+        self.qfil_configs = dict(qfil_configs or {})
         self.task_ids = list(task_ids) if task_ids is not None else [str(i) for i in range(len(self.sources))]
         if len(self.task_ids) != len(self.sources):
             raise ValueError("task_ids must contain exactly one ID per source")
@@ -1063,6 +1065,8 @@ class BatchWorkerObject(QObject):
         preflight_report: dict[str, Any] | None = None
         planned_outputs: dict[str, list[int]] = {}
         for i, source_item in enumerate(self.sources):
+            if self.task_ids[i] in self.qfil_configs:
+                continue
             key = str((self.output_dir / f"{source_item.stem}_raw.img").resolve()).casefold()
             planned_outputs.setdefault(key, []).append(i)
         collision_indices = {
@@ -1071,15 +1075,21 @@ class BatchWorkerObject(QObject):
         self.log.emit("info", f"Batch started: {total} file(s).")
         try:
             try:
-                preflight_report = preflight_batch(
-                    self.sources, self.output_dir, overwrite=self.overwrite
-                )
-                self.log.emit(
-                    "success",
-                    "Batch preflight passed: "
-                    f"{format_bytes(preflight_report['available_free_bytes'], 'en')} free; "
-                    f"{format_bytes(preflight_report['required_free_bytes'], 'en')} required including safety margin.",
-                )
+                sparse_sources = [source for source, task_id in zip(self.sources, self.task_ids)
+                                  if task_id not in self.qfil_configs]
+                if sparse_sources:
+                    preflight_report = preflight_batch(
+                        sparse_sources, self.output_dir, overwrite=self.overwrite
+                    )
+                else:
+                    preflight_report = {"skipped": True, "reason": "QFIL-only queue"}
+                if sparse_sources:
+                    self.log.emit(
+                        "success",
+                        "Batch preflight passed: "
+                        f"{format_bytes(preflight_report['available_free_bytes'], 'en')} free; "
+                        f"{format_bytes(preflight_report['required_free_bytes'], 'en')} required including safety margin.",
+                    )
             except Exception as exc:
                 message = (
                     "Batch preflight failed; no files were converted: "
@@ -1112,9 +1122,18 @@ class BatchWorkerObject(QObject):
                         self._emit_item_finished(index, source, row, rows)
                         continue
 
-                    destination = self.output_dir / f"{source.stem}_raw.img"
+                    qfil_config = self.qfil_configs.get(task_id)
+                    destination = (Path(qfil_config["output_dir"]) if qfil_config else self.output_dir / f"{source.stem}_raw.img")
                     self.log.emit("info", f"[{index+1}/{total}] {source}")
-                    row: dict[str, Any] = {"input": str(source), "output": str(destination), "status": "failed", "task_id": task_id}
+                    row: dict[str, Any] = {"input": str(source), "output": str(destination), "status": "failed", "task_id": task_id,
+                                           "task_type": "qfil" if qfil_config else "sparse"}
+                    if qfil_config:
+                        row["qfil"] = {
+                            "rawprogram_files": list(qfil_config.get("rawprogram_files", [])),
+                            "patch_files": list(qfil_config.get("patch_files", [])),
+                            "search_dirs": list(qfil_config.get("search_dirs", [])),
+                            "allow_overlaps": bool(qfil_config.get("allow_overlaps", False)),
+                        }
                     task_cancel = threading.Event()
                     with self._control:
                         self._current_task_id = task_id
@@ -1122,15 +1141,31 @@ class BatchWorkerObject(QObject):
                     self.item_started.emit(task_id)
                     task_started_at = time.perf_counter()
                     try:
-                        if index in collision_indices:
-                            raise ValueError(
-                                f"Output-name collision: multiple input files map to {destination}. "
-                                "Use different file names or output folders."
+                        if qfil_config:
+                            if destination.exists():
+                                if not destination.is_dir():
+                                    raise NotADirectoryError(f"QFIL output path is not a directory: {destination}")
+                                if any(destination.iterdir()) and not self.overwrite:
+                                    raise FileExistsError(f"QFIL output folder is not empty: {destination}")
+                            result = build_qfil_raw_images(
+                                qfil_config["rawprogram_files"], destination,
+                                patch_files=qfil_config.get("patch_files", []),
+                                search_dirs=qfil_config.get("search_dirs", []),
+                                force=self.overwrite,
+                                allow_overlaps=bool(qfil_config.get("allow_overlaps", False)),
                             )
-                        if destination.exists() and not self.overwrite:
-                            raise FileExistsError(
-                                f"Output exists; skipped to prevent overwrite: {destination}"
-                            )
+                            row.update({"status": "success", "result": result})
+                            self.log.emit("success", f"[{index+1}/{total}] QFIL RAW assembly completed: {destination}")
+                        else:
+                            if index in collision_indices:
+                                raise ValueError(
+                                    f"Output-name collision: multiple input files map to {destination}. "
+                                    "Use different file names or output folders."
+                                )
+                            if destination.exists() and not self.overwrite:
+                                raise FileExistsError(
+                                    f"Output exists; skipped to prevent overwrite: {destination}"
+                                )
 
                         def per_file_progress(data: dict[str, Any], *, _idx=index, _task_id=task_id) -> None:
                             current = int(data.get("percent", 0))
@@ -1146,14 +1181,15 @@ class BatchWorkerObject(QObject):
                         def cancel_requested() -> bool:
                             return self._cancel_event.is_set() or task_cancel.is_set()
 
-                        result = convert_sparse_to_raw(
-                            source, destination, force=self.overwrite, calculate_sha256=True,
-                            verify_output=self.verify_output,
-                            progress_callback=per_file_progress, event_callback=self.log.emit,
-                            cancel_requested=cancel_requested,
-                        )
-                        row.update({"status": "success", "result": result})
-                        self.log.emit("success", f"[{index+1}/{total}] Completed: {destination}")
+                        if not qfil_config:
+                            result = convert_sparse_to_raw(
+                                source, destination, force=self.overwrite, calculate_sha256=True,
+                                verify_output=self.verify_output,
+                                progress_callback=per_file_progress, event_callback=self.log.emit,
+                                cancel_requested=cancel_requested,
+                            )
+                            row.update({"status": "success", "result": result})
+                            self.log.emit("success", f"[{index+1}/{total}] Completed: {destination}")
                     except ConversionCancelled:
                         with self._control:
                             skipped = task_id in self._skipped_task_ids
@@ -2013,6 +2049,8 @@ class BatchQueueDialog(QDialog):
     ROLE_STATUS = ROLE_SOURCE + 2
     ROLE_ERROR = ROLE_SOURCE + 3
     ROLE_REQUEST_ORIGINAL_STATUS = ROLE_SOURCE + 4
+    ROLE_TASK_TYPE = ROLE_SOURCE + 5
+    ROLE_QFIL_CONFIG = ROLE_SOURCE + 6
 
     STATUS_COLORS = {
         "waiting": COLORS["muted"], "running": COLORS["cyan"],
@@ -2072,8 +2110,17 @@ class BatchQueueDialog(QDialog):
 
         row = QHBoxLayout()
         self.queue_mutation_buttons: list[QPushButton] = []
+        qfil_actions = [
+            (("Add QFIL task…" if parent.language == "en" else "Добавить задание QFIL…"), self._add_qfil_task),
+            (("QFIL XML tools" if parent.language == "en" else "Инструменты QFIL XML"), parent._open_qfil),
+        ]
+        for label, callback in qfil_actions:
+            button = QPushButton(label)
+            button.setIcon(parent.qfil_icon())
+            button.setIconSize(QSize(parent.icon_size, parent.icon_size))
+            button.clicked.connect(callback)
+            row.addWidget(button)
         controls = [
-            (("QFIL XML tools" if parent.language == "en" else "Инструменты QFIL XML"), "SP_FileDialogContentsView", parent._open_qfil),
             (parent.t("queue_add"), "SP_DialogOpenButton", self._add_files),
             (parent.t("queue_remove"), "SP_TrashIcon", self._remove),
             (parent.t("queue_clear"), "SP_DialogResetButton", self._clear),
@@ -2082,7 +2129,7 @@ class BatchQueueDialog(QDialog):
         ]
         for label, icon, callback in controls:
             button = QPushButton(label)
-            button.setIcon(parent.icon_for(icon))
+            button.setIcon(parent.qfil_icon() if icon == "QFIL" else parent.icon_for(icon))
             button.setIconSize(QSize(parent.icon_size, parent.icon_size))
             button.clicked.connect(callback)
             row.addWidget(button)
@@ -2196,7 +2243,9 @@ class BatchQueueDialog(QDialog):
         item.setData(self.ROLE_STATUS, status)
         item.setData(self.ROLE_ERROR, error)
         source = str(item.data(self.ROLE_SOURCE) or "")
-        item.setText(f"{self._status_label(status)}  ·  {source}")
+        task_type = str(item.data(self.ROLE_TASK_TYPE) or "sparse")
+        prefix = "QFIL" if task_type == "qfil" else "Sparse"
+        item.setText(f"{self._status_label(status)}  ·  [{prefix}] {source}")
         item.setForeground(QColor(self.STATUS_COLORS.get(status, COLORS["muted"])))
         item.setToolTip(error or source)
         self._refresh_summary()
@@ -2217,11 +2266,51 @@ class BatchQueueDialog(QDialog):
         item.setData(self.ROLE_SOURCE, resolved)
         item.setData(self.ROLE_TASK_ID, task_id)
         item.setData(self.ROLE_STATUS, "waiting")
+        item.setData(self.ROLE_TASK_TYPE, "sparse")
         self.list.addItem(item)
         self._set_item_status(task_id, "waiting")
         self.main.add_recent(resolved)
         if self.list.count() == 1:
             self.folder_edit.setText(str(Path(resolved).parent / "sparse-to-raw-output"))
+
+    def _add_qfil_task(self) -> None:
+        if self._is_running():
+            return
+        rawprograms, _ = QFileDialog.getOpenFileNames(
+            self, "Select rawprogram XML", str(Path.home()), "XML files (*.xml)"
+        )
+        if not rawprograms:
+            return
+        patches, _ = QFileDialog.getOpenFileNames(
+            self, "Select patch XML (optional)", str(Path(rawprograms[0]).parent), "XML files (*.xml)"
+        )
+        search_dir = QFileDialog.getExistingDirectory(
+            self, "Firmware/search folder", str(Path(rawprograms[0]).parent)
+        )
+        output_dir = QFileDialog.getExistingDirectory(
+            self, "QFIL RAW output folder", str(Path(self.folder_edit.text() or Path.home()))
+        )
+        if not output_dir:
+            return
+        config = {
+            "rawprogram_files": [str(Path(x).resolve()) for x in rawprograms],
+            "patch_files": [str(Path(x).resolve()) for x in patches],
+            "search_dirs": [str(Path(search_dir).resolve())] if search_dir else [],
+            "output_dir": str(Path(output_dir).resolve()),
+            "allow_overlaps": False,
+        }
+        label = f"{Path(rawprograms[0]).parent.name} ({len(rawprograms)} rawprogram)"
+        task_id = uuid.uuid4().hex
+        item = QListWidgetItem()
+        item.setData(self.ROLE_SOURCE, label)
+        item.setData(self.ROLE_TASK_ID, task_id)
+        item.setData(self.ROLE_STATUS, "waiting")
+        item.setData(self.ROLE_TASK_TYPE, "qfil")
+        item.setData(self.ROLE_QFIL_CONFIG, config)
+        self.list.addItem(item)
+        self._set_item_status(task_id, "waiting")
+        self._refresh_summary()
+        self._update_action_states()
 
     def _add_files(self) -> None:
         paths, _ = QFileDialog.getOpenFileNames(self, self.main.t("add_files"), str(Path.home()), "Images (*)")
@@ -2329,19 +2418,23 @@ class BatchQueueDialog(QDialog):
             QMessageBox.information(self, self.main.t("queue_title"), self.main.t("another_operation"))
             return
 
-        selected_rows: list[tuple[str, Path]] = []
+        selected_rows: list[tuple[str, Path, dict[str, Any] | None]] = []
         for index in range(self.list.count()):
             item = self.list.item(index)
             task_id = str(item.data(self.ROLE_TASK_ID))
             status = str(item.data(self.ROLE_STATUS) or "waiting")
             if status == "waiting" and (only_task_ids is None or task_id in only_task_ids):
-                selected_rows.append((task_id, Path(str(item.data(self.ROLE_SOURCE)))))
+                config = item.data(self.ROLE_QFIL_CONFIG) if item.data(self.ROLE_TASK_TYPE) == "qfil" else None
+                source_value = str(item.data(self.ROLE_SOURCE))
+                source_path = Path(config["rawprogram_files"][0]) if config else Path(source_value)
+                selected_rows.append((task_id, source_path, config))
         if not selected_rows:
             QMessageBox.information(self, self.main.t("queue_title"), self.main.t("add_files"))
             return
 
-        sources = [source for _, source in selected_rows]
-        task_ids = [task_id for task_id, _ in selected_rows]
+        sources = [source for _, source, _ in selected_rows]
+        task_ids = [task_id for task_id, _, _ in selected_rows]
+        qfil_configs = {task_id: config for task_id, _, config in selected_rows if config is not None}
         output_dir = Path(self.folder_edit.text()).expanduser().resolve()
         try:
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -2349,7 +2442,9 @@ class BatchQueueDialog(QDialog):
             QMessageBox.critical(self, "Error", str(exc))
             return
         try:
-            preflight_batch(sources, output_dir, overwrite=self.overwrite.isChecked())
+            sparse_sources = [source for task_id, source in zip(task_ids, sources) if task_id not in qfil_configs]
+            if sparse_sources:
+                preflight_batch(sparse_sources, output_dir, overwrite=self.overwrite.isChecked())
         except Exception as exc:
             QMessageBox.warning(
                 self, self.main.t("queue_title"),
@@ -2382,6 +2477,7 @@ class BatchQueueDialog(QDialog):
         worker = BatchWorkerObject(
             sources, output_dir, self.overwrite.isChecked(),
             verify_output=self.verify_output.isChecked(), task_ids=task_ids,
+            qfil_configs=qfil_configs,
         )
         self.worker = worker
         worker.log.connect(self._log)
@@ -3015,22 +3111,76 @@ class MainWindow(QWidget):
         attr = getattr(QStyle.StandardPixmap, standard_name, None)
         return self.style().standardIcon(attr) if attr is not None else QIcon()
 
+    def qfil_icon(self) -> QIcon:
+        """Return a compact, theme-independent icon for QFIL/XML actions."""
+        pixmap = QPixmap(32, 32)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        cyan = QColor(COLORS["cyan"])
+        pale = QColor(COLORS["text"])
+        panel = QColor(COLORS["panel_alt"])
+
+        # Document outline with a folded corner.
+        outline = QPainterPath()
+        outline.moveTo(9, 4.5)
+        outline.lineTo(19, 4.5)
+        outline.lineTo(25, 10.5)
+        outline.lineTo(25, 27)
+        outline.quadTo(25, 28.5, 23.5, 28.5)
+        outline.lineTo(9, 28.5)
+        outline.quadTo(7.5, 28.5, 7.5, 27)
+        outline.lineTo(7.5, 6)
+        outline.quadTo(7.5, 4.5, 9, 4.5)
+        outline.closeSubpath()
+        painter.setPen(QPen(cyan, 1.8))
+        painter.setBrush(QBrush(panel))
+        painter.drawPath(outline)
+
+        fold = QPainterPath()
+        fold.moveTo(19, 4.8)
+        fold.lineTo(19, 10)
+        fold.quadTo(19, 10.8, 20, 10.8)
+        fold.lineTo(24.5, 10.8)
+        painter.setPen(QPen(cyan, 1.5))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(fold)
+
+        painter.setPen(QPen(pale, 1.5, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawLine(11, 15, 21, 15)
+        painter.drawLine(11, 19, 21, 19)
+        painter.setPen(QPen(cyan, 1.8, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawLine(11, 23, 17, 23)
+        painter.end()
+        return QIcon(pixmap)
+
     def _build_ui(self) -> None:
         outer=QVBoxLayout(self); outer.setContentsMargins(78,12,78,34); outer.setSpacing(8)
         self.header=HeaderBar(APP_VERSION,self); outer.addWidget(self.header)
         separator=QFrame(); separator.setObjectName("cyanSeparator"); separator.setFixedHeight(2); outer.addWidget(separator)
-        toolbar=QHBoxLayout(); toolbar.setSpacing(7)
-        self.qfil_button=QPushButton("QFIL XML"); self.qfil_button.clicked.connect(self._open_qfil); toolbar.addWidget(self.qfil_button)
-        self.analyze_button=QPushButton(); self.analyze_button.setIcon(self.icon_for("SP_FileDialogContentsView")); self.analyze_button.setIconSize(QSize(24,24)); self.analyze_button.clicked.connect(self._open_analysis); toolbar.addWidget(self.analyze_button)
-        self.structure_button=QPushButton(); self.structure_button.setIcon(self.icon_for("SP_FileDialogDetailedView")); self.structure_button.setIconSize(QSize(24,24)); self.structure_button.clicked.connect(self._open_structure); toolbar.addWidget(self.structure_button)
-        self.queue_button=QPushButton(); self.queue_button.setIcon(self.icon_for("SP_FileDialogListView")); self.queue_button.setIconSize(QSize(24,24)); self.queue_button.clicked.connect(self._open_queue); toolbar.addWidget(self.queue_button)
-        self.merge_button=QPushButton(); self.merge_button.setIcon(self.icon_for("SP_DirLinkIcon")); self.merge_button.setIconSize(QSize(24,24)); self.merge_button.clicked.connect(self._open_merge); toolbar.addWidget(self.merge_button)
-        self.report_button=QPushButton(); self.report_button.setIcon(self.icon_for("SP_DialogSaveButton")); self.report_button.setIconSize(QSize(24,24)); self.report_button.clicked.connect(self._save_last_report); self.report_button.setEnabled(False); toolbar.addWidget(self.report_button)
-        self.diagnostics_button=QPushButton(); self.diagnostics_button.setIcon(self.icon_for("SP_MessageBoxInformation")); self.diagnostics_button.setIconSize(QSize(24,24)); self.diagnostics_button.clicked.connect(self._open_diagnostics); toolbar.addWidget(self.diagnostics_button)
-        toolbar.addSpacing(8); self.recent_label=QLabel(); toolbar.addWidget(self.recent_label)
-        self.recent_combo=QComboBox(); self.recent_combo.setMinimumWidth(140); self.recent_combo.setMaximumWidth(340); self.recent_combo.currentIndexChanged.connect(self._recent_selected); toolbar.addWidget(self.recent_combo,1)
-        self.language_label=QLabel(); toolbar.addWidget(self.language_label)
-        self.language_combo=QComboBox(); self.language_combo.addItem("Русский","ru"); self.language_combo.addItem("English","en"); self.language_combo.setMaximumWidth(130); self.language_combo.currentIndexChanged.connect(self._language_changed); toolbar.addWidget(self.language_combo)
+        # Split the toolbar into two deliberate rows.  This prevents long
+        # translated labels from colliding with the recent-files/language
+        # controls on common 1120-1366 px desktop widths.
+        toolbar=QVBoxLayout(); toolbar.setSpacing(6)
+        self.toolbar_layout=toolbar
+        toolbar_actions_top=QHBoxLayout(); toolbar_actions_top.setSpacing(7)
+        toolbar_actions_bottom=QHBoxLayout(); toolbar_actions_bottom.setSpacing(7)
+        self.toolbar_actions_top=toolbar_actions_top
+        self.toolbar_actions_bottom=toolbar_actions_bottom
+        self.qfil_button=QPushButton("QFIL XML"); self.qfil_button.setObjectName("toolbarButton"); self.qfil_button.setIcon(self.qfil_icon()); self.qfil_button.setIconSize(QSize(20,20)); self.qfil_button.clicked.connect(self._open_qfil); toolbar_actions_top.addWidget(self.qfil_button)
+        self.analyze_button=QPushButton(); self.analyze_button.setObjectName("toolbarButton"); self.analyze_button.setIcon(self.icon_for("SP_FileDialogContentsView")); self.analyze_button.setIconSize(QSize(20,20)); self.analyze_button.clicked.connect(self._open_analysis); toolbar_actions_top.addWidget(self.analyze_button)
+        self.structure_button=QPushButton(); self.structure_button.setObjectName("toolbarButton"); self.structure_button.setIcon(self.icon_for("SP_FileDialogDetailedView")); self.structure_button.setIconSize(QSize(20,20)); self.structure_button.clicked.connect(self._open_structure); toolbar_actions_top.addWidget(self.structure_button)
+        self.queue_button=QPushButton(); self.queue_button.setObjectName("toolbarButton"); self.queue_button.setIcon(self.icon_for("SP_FileDialogListView")); self.queue_button.setIconSize(QSize(20,20)); self.queue_button.clicked.connect(self._open_queue); toolbar_actions_top.addWidget(self.queue_button)
+        self.merge_button=QPushButton(); self.merge_button.setObjectName("toolbarButton"); self.merge_button.setIcon(self.icon_for("SP_DirLinkIcon")); self.merge_button.setIconSize(QSize(20,20)); self.merge_button.clicked.connect(self._open_merge); toolbar_actions_bottom.addWidget(self.merge_button)
+        self.report_button=QPushButton(); self.report_button.setObjectName("toolbarButton"); self.report_button.setIcon(self.icon_for("SP_DialogSaveButton")); self.report_button.setIconSize(QSize(20,20)); self.report_button.clicked.connect(self._save_last_report); self.report_button.setEnabled(False); toolbar_actions_bottom.addWidget(self.report_button)
+        self.diagnostics_button=QPushButton(); self.diagnostics_button.setObjectName("toolbarButton"); self.diagnostics_button.setIcon(self.icon_for("SP_MessageBoxInformation")); self.diagnostics_button.setIconSize(QSize(20,20)); self.diagnostics_button.clicked.connect(self._open_diagnostics); toolbar_actions_bottom.addWidget(self.diagnostics_button)
+        toolbar_actions_bottom.addSpacing(5); self.recent_label=QLabel(); toolbar_actions_bottom.addWidget(self.recent_label)
+        self.recent_combo=QComboBox(); self.recent_combo.setMinimumWidth(110); self.recent_combo.setMaximumWidth(300); self.recent_combo.currentIndexChanged.connect(self._recent_selected); toolbar_actions_bottom.addWidget(self.recent_combo,1)
+        self.language_label=QLabel(); toolbar_actions_bottom.addWidget(self.language_label)
+        self.language_combo=QComboBox(); self.language_combo.addItem("Русский","ru"); self.language_combo.addItem("English","en"); self.language_combo.setMinimumWidth(105); self.language_combo.setMaximumWidth(125); self.language_combo.currentIndexChanged.connect(self._language_changed); toolbar_actions_bottom.addWidget(self.language_combo)
+        toolbar.addLayout(toolbar_actions_top)
+        toolbar.addLayout(toolbar_actions_bottom)
         outer.addLayout(toolbar)
         title_row=QHBoxLayout(); title_row.setContentsMargins(70,0,70,0); title_row.setSpacing(18)
         self.title_line_left=QFrame(); self.title_line_left.setObjectName("titleLine"); self.title_line_left.setFixedHeight(2)
@@ -3090,6 +3240,7 @@ class MainWindow(QWidget):
             QLabel#statValue {{ color:#d5e2e8; background:transparent; line-height:1.2; }} QLabel#statusIdle {{ color:{COLORS['muted']}; font-family:Consolas; font-size:9pt; }}
             QFrame#panelSeparator {{ background:#203946; border:none; }}
             QPushButton {{ background:#0a1b27; color:{COLORS['cyan']}; border:1px solid #24505e; border-radius:4px; padding:6px 10px; }}
+            QPushButton#toolbarButton {{ padding:5px 8px; min-height:27px; }}
             QPushButton:hover {{ background:#102e3e; border-color:{COLORS['cyan']}; }} QPushButton:pressed {{ background:#164456; }}
             QPushButton:disabled {{ color:#526570; background:#0b1219; border-color:#1c2c35; }}
             QPushButton#browseButton,QPushButton#clearButton {{ background:#0a1b27; color:{COLORS['cyan']}; border:1px solid #24505e; border-radius:4px; padding:6px 10px; }}

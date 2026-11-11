@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import struct
+import sys
 import tempfile
 import threading
 import unittest
@@ -10,6 +11,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 import zlib
 from pathlib import Path
+
+# Support both `python tests/gui_smoke_tests.py` and unittest discovery from
+# the repository root on Windows, where sys.path[0] is the tests directory.
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -99,11 +106,32 @@ class SparseToRawGuiTests(unittest.TestCase):
             self.assertEqual(APP_USER_MODEL_ID, "LIJTA3U.sparse-to-raw")
             self.assertFalse(window.windowIcon().isNull())
             self.assertFalse(self.app.windowIcon().isNull())
+            self.assertFalse(window.qfil_icon().isNull())
+            self.assertFalse(window.qfil_button.icon().isNull())
             outer, inner = window._frame_paths()
             self.assertGreater(outer.elementCount(), 8)
             self.assertGreater(inner.elementCount(), 8)
             # The shell is painted with QPainter antialiasing rather than an integer QRegion clip.
             self.assertTrue(window.mask().isEmpty())
+        finally:
+            window.close()
+
+    def test_main_toolbar_uses_two_rows_for_actions_and_controls(self) -> None:
+        window = MainWindow()
+        try:
+            window.resize(1120, 760)
+            window.show()
+            self.app.processEvents()
+            self.assertEqual(window.toolbar_layout.count(), 2)
+            self.assertEqual(window.toolbar_actions_top.count(), 4)
+            self.assertGreaterEqual(window.toolbar_actions_bottom.count(), 7)
+            top_buttons = [window.qfil_button, window.analyze_button,
+                           window.structure_button, window.queue_button]
+            bottom_buttons = [window.merge_button, window.report_button,
+                              window.diagnostics_button]
+            self.assertTrue(all(button.isVisible() for button in top_buttons + bottom_buttons))
+            self.assertLess(max(button.geometry().bottom() for button in top_buttons),
+                            min(button.geometry().top() for button in bottom_buttons))
         finally:
             window.close()
 

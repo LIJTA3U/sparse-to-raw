@@ -1,3 +1,26 @@
+## v0.6.0-dev5 — toolbar layout refinement
+
+### Changed
+- Split the main toolbar into two rows to prevent action labels and icons from colliding with recent-file and language controls.
+- Slightly reduced toolbar icon size and tightened button padding while preserving readable text.
+
+### Tests
+- Added a GUI smoke test that checks the two-row layout at the minimum supported window width.
+
+## v0.6.0-dev4-hotfix1
+
+### Fixed
+- Added the missing `MainWindow.qfil_icon()` implementation used by the main toolbar and Batch Queue actions.
+- Made `tests/gui_smoke_tests.py` add the repository root to `sys.path`, so it can be launched directly from the project root on Windows.
+- Extended the GUI smoke test to verify that the QFIL icon is created and assigned to the main toolbar button.
+
+## v0.6.0-dev4
+
+- Added mixed sequential Sparse and QFIL jobs to Batch Queue.
+- Added a dedicated QFIL XML document icon to the main toolbar and queue actions.
+- QFIL queue items retain rawprogram/patch manifest paths, search folder, output folder, and overlap policy in their item metadata.
+- Extended batch JSON reports with QFIL task metadata. QFIL patch commands remain analysis-only.
+
 
 ## v0.6.0-dev3 — QFIL GUI integration
 
