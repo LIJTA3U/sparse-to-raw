@@ -24,6 +24,7 @@ CHUNK_RAW = 0xCAC1
 CHUNK_FILL = 0xCAC2
 CHUNK_DONT_CARE = 0xCAC3
 CHUNK_CRC32 = 0xCAC4
+APP_VERSION = "v0.6.0-rc1"
 
 HEADER_FMT = "<IHHHHIIII"
 HEADER_SIZE = struct.calcsize(HEADER_FMT)  # 28 bytes
@@ -1879,7 +1880,7 @@ def build_argument_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawTextHelpFormatter,
     )
     parser.add_argument("--lang", choices=("en", "ru"), default=None, help=tr("lang"))
-    parser.add_argument("--version", action="version", version="sparse-to-raw v0.6.0-dev7")
+    parser.add_argument("--version", action="version", version=f"sparse-to-raw {APP_VERSION}")
     parser.add_argument("input_sparse", nargs="?", help=tr("input"))
     parser.add_argument("output_raw", nargs="?", help=tr("output_pos"))
     parser.add_argument(
@@ -1925,6 +1926,81 @@ def main(argv: list[str] | None = None) -> int:
     if arguments and arguments[0] in {"qfil-analyze", "qfil-build"}:
         from qfil_xml import run_qfil_cli
         return run_qfil_cli(arguments[0], arguments[1:])
+    if arguments and arguments[0] == "validate":
+        from sparse_validator import validate_sparse
+        command = argparse.ArgumentParser(
+            prog="sparse-to-raw validate",
+            description=tr("validate_desc"),
+        )
+        command.add_argument("input_sparse", help=tr("validate_input"))
+        command.add_argument("--json-report", metavar="FILE", help=tr("validate_json"))
+        command.add_argument("--force", action="store_true", help=tr("force"))
+        command.add_argument("--no-sha256", action="store_true", help=tr("validate_no_sha"))
+        command.add_argument("--quiet", action="store_true", help=tr("validate_quiet"))
+        opts = command.parse_args(arguments[1:])
+        try:
+            source = Path(opts.input_sparse).expanduser().resolve()
+            report_path = Path(opts.json_report).expanduser().resolve() if opts.json_report else None
+            if report_path and report_path == source:
+                command.error("JSON report path must differ from the input image")
+            if report_path and not report_path.parent.is_dir():
+                command.error(f"JSON report directory not found: {report_path.parent}")
+            def show_validation_progress(item):
+                if not opts.quiet and item.get("stage") in ("validating", "completed"):
+                    total = int(item.get("expected_bytes", 0))
+                    done = int(item.get("processed_bytes", 0))
+                    percent = int(item.get("percent", 0))
+                    print(f"\r{tr('validate_progress')}: {percent:3d}% | {done:,}/{total:,} logical bytes", end="", file=sys.stderr, flush=True)
+            result = validate_sparse(
+                source,
+                calculate_sha256=not opts.no_sha256,
+                progress_callback=show_validation_progress,
+            )
+            if not opts.quiet:
+                print(file=sys.stderr)
+            payload = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
+            print(payload, end="")
+            if report_path:
+                _atomic_write_text(report_path, payload, force=opts.force)
+            return 0 if result.get("valid") else 1
+        except (OSError, ValueError, InterruptedError) as exc:
+            print(f"{tr('error')}: {localize_error(str(exc))}", file=sys.stderr)
+            return 2
+
+    if arguments and arguments[0] == "compare":
+        from image_compare import compare_images
+        command = argparse.ArgumentParser(
+            prog="sparse-to-raw compare",
+            description=tr("compare_desc"),
+        )
+        command.add_argument("left", help=tr("compare_left"))
+        command.add_argument("right", help=tr("compare_right"))
+        command.add_argument("--json-report", metavar="FILE", help=tr("compare_json"))
+        command.add_argument("--quiet", action="store_true", help=tr("compare_quiet"))
+        opts = command.parse_args(arguments[1:])
+        try:
+            report_path = Path(opts.json_report).expanduser().resolve() if opts.json_report else None
+            inputs = {Path(opts.left).expanduser().resolve(), Path(opts.right).expanduser().resolve()}
+            if report_path and report_path in inputs:
+                command.error("JSON report path must differ from both input files")
+            if report_path and not report_path.parent.is_dir():
+                command.error(f"JSON report directory not found: {report_path.parent}")
+            def show_compare_progress(item):
+                if not opts.quiet and item.get("stage") == "comparing":
+                    total = int(item.get("total_bytes", 0))
+                    done = int(item.get("processed_bytes", 0))
+                    print(f"\r{tr('compare_progress')}: {item.get('percent', 0):6.2f}% | {done:,}/{total:,} logical bytes", end="", file=sys.stderr, flush=True)
+            result = compare_images(opts.left, opts.right, progress_callback=show_compare_progress)
+            if not opts.quiet:
+                print(file=sys.stderr)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            if report_path:
+                _atomic_write_text(report_path, json.dumps(result, ensure_ascii=False, indent=2) + "\n", force=False)
+            return 0 if result["identical"] else 1
+        except (OSError, ValueError, InterruptedError) as exc:
+            print(f"{tr('error')}: {localize_error(str(exc))}", file=sys.stderr)
+            return 2
+
     if arguments and arguments[0] == "raw-to-sparse":
         from raw_to_sparse import raw_to_sparse
         command = argparse.ArgumentParser(prog="sparse-to-raw raw-to-sparse", description="Convert RAW image to Android Sparse")

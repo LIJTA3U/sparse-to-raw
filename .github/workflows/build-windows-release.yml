@@ -10,7 +10,7 @@ on:
         description: Existing GitHub Release to attach the packages to
         required: true
         type: string
-        default: v0.4.0
+        default: v0.6.0-rc1
       source_ref:
         description: Branch, tag, or commit to build from (main includes the post-release test fixes)
         required: true
@@ -58,17 +58,28 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Verify application version matches release tag
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.event.release.tag_name }}
+        run: |
+          $appVersion = python -c "from sparse_to_raw import APP_VERSION; print(APP_VERSION)"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not read APP_VERSION from sparse_to_raw.py"
+          }
+          if ($appVersion.Trim() -ne $env:RELEASE_TAG.Trim()) {
+            throw "Application version '$appVersion' does not match release tag '$env:RELEASE_TAG'"
+          }
+          Write-Host "Application version matches release tag: $appVersion"
+
       - name: Install GUI and build dependencies
         run: python -m pip install --upgrade -r requirements-build.txt
 
-      - name: Run core tests before packaging
-        run: python -m unittest discover -s tests -p test_sparse_to_raw.py -v
+      - name: Run complete dependency-free test suite before packaging
+        run: python -m unittest discover -s tests -v
 
-      - name: Run diagnostic tests before packaging
-        run: python -m unittest discover -s tests -p test_diagnostics.py -v
-
-      - name: Run QFIL XML tests before packaging
-        run: python -m unittest discover -s tests -p test_qfil_xml.py -v
+      - name: Compile Python modules before packaging
+        run: python -m compileall -q .
 
       - name: Run GUI smoke tests before packaging
         env:
@@ -87,6 +98,25 @@ jobs:
           python -m PyInstaller --noconfirm --clean --onefile
           --name sparse-to-raw --distpath dist/cli --workpath build/cli
           --specpath build/spec/cli sparse_to_raw.py
+
+      - name: Smoke-test packaged CLI
+        shell: pwsh
+        run: |
+          $cli = "dist/cli/sparse-to-raw.exe"
+          if (-not (Test-Path -LiteralPath $cli -PathType Leaf)) {
+            throw "Packaged CLI executable was not created: $cli"
+          }
+
+          $versionOutput = & $cli --version
+          if ($LASTEXITCODE -ne 0 -or -not $versionOutput) {
+            throw "Packaged CLI --version failed with exit code $LASTEXITCODE"
+          }
+          Write-Host "Packaged CLI version: $versionOutput"
+
+          & $cli --help | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged CLI --help failed with exit code $LASTEXITCODE"
+          }
 
       - name: Build GUI application folder
         shell: pwsh
@@ -265,6 +295,22 @@ jobs:
             Write-Host ("Verified {0} ({1} bytes)" -f $file, (Get-Item -LiteralPath $file).Length)
           }
 
+      - name: Generate SHA-256 manifest
+        shell: pwsh
+        run: |
+          $assets = @(
+            "dist/cli/sparse-to-raw.exe",
+            "dist/onefile/sparse-to-raw-gui.exe",
+            "dist/sparse-to-raw-gui-windows.zip"
+          )
+          $lines = foreach ($asset in $assets) {
+            $hash = (Get-FileHash -LiteralPath $asset -Algorithm SHA256).Hash.ToLowerInvariant()
+            $name = [System.IO.Path]::GetFileName($asset)
+            "$hash  $name"
+          }
+          $lines | Set-Content -LiteralPath "dist/SHA256SUMS.txt" -Encoding ascii
+          Get-Content -LiteralPath "dist/SHA256SUMS.txt"
+
       - name: Upload build artifacts for inspection
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
@@ -274,6 +320,7 @@ jobs:
             dist/cli/sparse-to-raw.exe
             dist/onefile/sparse-to-raw-gui.exe
             dist/sparse-to-raw-gui-windows.zip
+            dist/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
 
@@ -286,5 +333,6 @@ jobs:
             dist/cli/sparse-to-raw.exe
             dist/onefile/sparse-to-raw-gui.exe
             dist/sparse-to-raw-gui-windows.zip
+            dist/SHA256SUMS.txt
           fail_on_unmatched_files: true
           overwrite_files: true

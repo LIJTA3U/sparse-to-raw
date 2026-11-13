@@ -2,6 +2,9 @@ __pycache__/
 *.py[cod]
 *.img
 *.raw
+*.sparse
+*.simg
+*.img_sparsechunk.*
 *.tmp
 .venv/
 venv/

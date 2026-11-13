@@ -2,7 +2,7 @@
 
 ## Windows-релиз (рекомендуется для обычных пользователей)
 
-1. Откройте [GitHub Release v0.4.0](https://github.com/LIJTA3U/sparse-to-raw/releases/tag/v0.4.0).
+1. Откройте [GitHub Release v0.5.0](https://github.com/LIJTA3U/sparse-to-raw/releases/tag/v0.5.0).
 2. Скачайте `sparse-to-raw-gui-windows.zip`.
 3. Полностью распакуйте архив в выбранную папку.
 4. Запустите `sparse-to-raw-gui.exe` из распакованной папки приложения.

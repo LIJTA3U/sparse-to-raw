@@ -60,6 +60,18 @@ python sparse_to_raw.py super.img super_raw.img --sha256 --json-report report.js
 
 SHA-256 is calculated over the logical RAW contents, including zero-filled `DONT_CARE` ranges; it is not the hash of the compressed Sparse input. Existing report files are also protected unless `--force` is supplied.
 
+## Compare logical image contents
+
+Compare two RAW and/or Android Sparse images without creating an intermediate RAW file:
+
+```powershell
+py sparse_to_raw.py compare super_raw.img super.img --json-report comparison.json
+```
+
+Each Sparse input is expanded in bounded 1 MiB windows while its structure, per-chunk CRC32 values, and optional image checksum are validated. RAW inputs are read directly. Both logical SHA-256 hashes are calculated. The report identifies the input formats and logical sizes and, when contents differ, the offset of the first differing byte. Comparison is streaming and does not require disk space for an expanded image.
+
+Exit codes: `0` means the logical contents are identical, `1` means they differ, and `2` means an input or comparison error occurred. `--quiet` hides progress. `--json-report FILE` writes a machine-readable report and does not overwrite an existing report.
+
 ## Merge independent Sparse images
 
 ```bat
@@ -68,7 +80,7 @@ py sparse_to_raw.py --merge-parts super.img_sparsechunk.0 super.img_sparsechunk.
 
 Pass all parts in the intended order. Every input must be a complete, independently valid Sparse image with its own header. The command validates the parts and does not publish the final output if a part fails. It is not an arbitrary byte-split reassembler.
 
-Version 0.4.0 does not discover or numerically sort `super.img_sparsechunk.*` files automatically; the order must be specified by the user.
+The CLI accepts an explicitly ordered list and does not auto-discover split images. The GUI can discover `super.img_sparsechunk.*` groups and sort their numeric indexes.
 
 ## Verify the written RAW output (development branch)
 
@@ -84,7 +96,7 @@ python sparse_to_raw.py --merge-parts super.img_sparsechunk.0 super.img_sparsech
 
 `--verify-output` is available on the current development branch. After the Sparse data and checksums have been validated and the RAW staging file has been closed, the program reads the staged RAW file again in bounded chunks. It compares the actual byte count and SHA-256 with the expected logical RAW contents computed while expanding the Sparse input. The destination is published only after this check succeeds. On mismatch, read error, or cancellation, the staging file is discarded and an existing destination is preserved.
 
-This verification adds a complete read pass and therefore increases disk I/O and elapsed time. It is separate from, and does not replace, validation of the Sparse headers and checksums. With `--json-report`, the `output_verification` object records the expected and actual sizes and hashes, verified byte count, duration, and result. The option is valid for conversion and `--merge-parts`, not `--info` or `--verify-only`. The published v0.4.0 binary does not include this development option.
+This verification adds a complete read pass and therefore increases disk I/O and elapsed time. It is separate from, and does not replace, validation of the Sparse headers and checksums. With `--json-report`, the `output_verification` object records the expected and actual sizes and hashes, verified byte count, duration, and result. The option is valid for conversion and `--merge-parts`, not `--info` or `--verify-only`. The option is included in the published v0.5.0 release line and the v0.6.0 release candidate and release line.
 
 ## Qualcomm QFIL manifests
 
@@ -126,6 +138,7 @@ usage: sparse_to_raw.py [-h] [--lang {en,ru}] [--version] [--merge-parts SPARSE_
                         [--sha256] [--verify-output] [--json-report FILE] [--quiet]
                         [input_sparse] [output_raw]
 
+Subcommands: compare LEFT RIGHT | raw-to-sparse INPUT_RAW OUTPUT_SPARSE
 QFIL commands: qfil-analyze RAWPROGRAM.XML ... | qfil-build RAWPROGRAM.XML ... --output-dir DIR
 ```
 
@@ -146,3 +159,15 @@ QFIL commands: qfil-analyze RAWPROGRAM.XML ... | qfil-build RAWPROGRAM.XML ... -
 | `--lang {en,ru}` | Select the CLI language; English is the default |
 
 Run `python sparse_to_raw.py --help` for the help text shipped with your checkout.
+
+## Sparse Validator
+
+Validate an Android Sparse image without creating a RAW output:
+
+```powershell
+py sparse_to_raw.py validate input.sparse
+py sparse_to_raw.py validate input.sparse --json-report validation.json
+py sparse_to_raw.py validate input.sparse --no-sha256 --quiet
+```
+
+Exit codes: `0` means valid, `1` means the image failed validation, and `2` means an execution or filesystem error. Existing JSON reports are not overwritten unless `--force` is specified. The validator checks the complete stream and calculates logical SHA-256 by default; `--no-sha256` skips only the SHA-256 calculation. No intermediate RAW file is written.

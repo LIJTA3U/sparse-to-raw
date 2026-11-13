@@ -20,3 +20,5 @@ Common pages:
 - [Qualcomm QFIL XML support (EN)](en/qfil-xml.md)
 - [Поддержка XML Qualcomm QFIL (RU)](ru/qfil-xml.md)
 - [Screenshots / Скриншоты](screenshots/)
+- [v0.6.0 release checklist](en/release-checklist.md)
+- [Контрольный список релиза v0.6.0](ru/release-checklist.md)

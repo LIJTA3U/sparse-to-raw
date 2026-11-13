@@ -11,6 +11,7 @@ from contextlib import redirect_stdout, redirect_stderr
 from io import StringIO
 
 from sparse_to_raw import (
+    APP_VERSION,
     CHUNK_CRC32,
     CHUNK_DONT_CARE,
     CHUNK_FILL,
@@ -66,12 +67,12 @@ def make_sparse(chunks: list[bytes], raw_bytes: bytes, image_checksum: int | Non
 
 
 class SparseToRawTests(unittest.TestCase):
-    def test_cli_version_matches_current_development_build(self) -> None:
+    def test_cli_version_reports_shared_application_version(self) -> None:
         stdout = StringIO()
         with redirect_stdout(stdout), self.assertRaises(SystemExit) as raised:
             main(["--version"])
         self.assertEqual(raised.exception.code, 0)
-        self.assertIn("v0.6.0-dev7", stdout.getvalue())
+        self.assertIn(APP_VERSION, stdout.getvalue())
 
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()

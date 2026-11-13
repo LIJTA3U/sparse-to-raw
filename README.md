@@ -13,25 +13,29 @@ A streaming Android Sparse Image v1 inspector and converter that expands Sparse 
 
 ## Features
 
-- Convert Android Sparse Image format v1 to logical RAW output.
+- Convert Android Sparse Image format v1 to logical RAW output and encode RAW files as Android Sparse v1.0.
 - Support `RAW`, `FILL`, `DONT_CARE`, and `CRC32` chunks.
-- Validate per-chunk CRC32, the image checksum, headers, block sizes/counts, truncation, and trailing bytes.
+- Validate per-chunk CRC32, the image checksum, headers, block sizes/counts, truncation, and trailing bytes with the standalone Sparse Validator.
 - Inspect or verify an image without creating a RAW file (`--info`, `--verify-only`).
 - Protect existing output files by default; `--force` is required to replace them.
 - Report progress, throughput, processed bytes, and chunk counts.
 - Optionally calculate SHA-256 over the logical RAW contents and export JSON reports.
 - Verify a completed RAW staging file by re-reading it and comparing its size and SHA-256 with the expected logical contents (`--verify-output`).
 - Merge independent Sparse images in an explicitly supplied order (`--merge-parts`).
+- Compare RAW and/or Android Sparse images by logical contents without creating intermediate RAW files (`compare`); report the first differing byte and both logical SHA-256 hashes.
+- Save and reload versioned JSON Batch Profiles for mixed Sparse → RAW, RAW → Sparse, and QFIL queues.
+- Export detailed JSON reports for conversions, output verification, validation, comparison, QFIL operations, and batch runs.
 - Analyze Qualcomm QFIL `rawprogram*.xml` / `patch*.xml`, resolve referenced firmware files, summarize partitions, and assemble one RAW image per physical partition (`qfil-analyze`, `qfil-build`). Patch instructions are reported but not replayed.
 - Stream large images without loading the complete input or output into memory.
 - Use only the Python standard library for the CLI.
-- Provide a PySide6 GUI with Russian/English language selection, saved preferences, recent files, image analysis, sequential batch conversion, visual ordered merging, optional output verification, a searchable Diagnostic Center, and a paged Sparse Structure Viewer with streaming CSV/JSON export.
+- Provide a PySide6 GUI with a dedicated RAW → Sparse dialog and mixed batch-queue support, plus Russian/English language selection, saved preferences, recent files, logical RAW/Sparse comparison, image analysis, sequential batch conversion, visual ordered merging, optional output verification, a searchable Diagnostic Center, and a paged Sparse Structure Viewer with streaming CSV/JSON export.
 
 `DONT_CARE` ranges are interpreted as zero bytes. The resulting logical RAW contents and size are correct; the filesystem may store zero ranges as sparse holes.
 
 ## Download for Windows
 
-**Release:** [sparse-to-raw v0.5.0](https://github.com/LIJTA3U/sparse-to-raw/releases/tag/v0.5.0)
+**Latest stable release:** [sparse-to-raw v0.5.0](https://github.com/LIJTA3U/sparse-to-raw/releases/tag/v0.5.0)  
+**v0.6.0 release candidate:** [v0.6.0-rc1](https://github.com/LIJTA3U/sparse-to-raw/releases/tag/v0.6.0-rc1) (Windows executables are built by GitHub Actions after the candidate release is published).
 
 The release provides:
 
@@ -84,6 +88,14 @@ Calculate the logical RAW SHA-256 and save a report:
 python sparse_to_raw.py super.img super_raw.img --sha256 --json-report report.json
 ```
 
+Compare two images by their logical contents (RAW and/or Android Sparse):
+
+```bat
+py sparse_to_raw.py compare left.raw right.sparse --json-report comparison.json
+```
+
+The command returns exit code `0` when the images are identical, `1` when they differ, and `2` when comparison cannot be completed. It does not create an intermediate RAW file.
+
 Merge independent Sparse files in the order supplied:
 
 ```bat
@@ -105,6 +117,8 @@ For Qualcomm manifests, see the [QFIL XML guide](docs/en/qfil-xml.md). For all C
 - [Diagnostic Center](docs/en/diagnostic-center.md)
 - [Sparse Structure Viewer](docs/en/sparse-structure-viewer.md)
 - [Development and packaging](docs/en/development.md)
+- [v0.6.0 release checklist](docs/en/release-checklist.md)
+- [v0.6.0 release notes](RELEASE_NOTES_v0.6.0-rc1.md)
 - [Changelog](docs/en/changelog.md)
 - [Contributing](docs/CONTRIBUTING.md)
 - [Security policy](docs/SECURITY.md)
@@ -112,9 +126,9 @@ For Qualcomm manifests, see the [QFIL XML guide](docs/en/qfil-xml.md). For all C
 
 The [Russian README](README.ru.md) links to the Russian documentation in `docs/ru/`.
 
-## Current development
+## v0.6.0 release candidate
 
-The v0.6.0-dev6 development build refines the main toolbar into two rows so action labels, icons, recent files, and language controls fit without crowding. The v0.6.0-dev4 development build adds QFIL XML analysis and RAW assembly to the dependency-free CLI, improves the drop-zone icon, and presents a clearer CLI summary. The CLI language can now be selected with `--lang en|ru` (English is the default). The QFIL backend is now available in a dedicated GUI dialog from the main toolbar and from the Batch Queue window. The dialog supports manifest selection, optional firmware search folders, analysis, overlap review, and RAW assembly; QFIL jobs can now be added to the same sequential Batch Queue as Sparse conversions. Active QFIL assembly is currently non-interruptible; cancellation takes effect at the next safe task boundary. The v0.5.0 release includes automatic GUI discovery and numeric ordering of Sparse parts, preflight disk-space and path checks, optional read-back verification of completed RAW output, advanced batch-queue controls, the searchable Diagnostic Center, and the paged Sparse Structure Viewer. It also includes localized operation-log messages, a dedicated Windows taskbar identity and application icon, and a smoother version of the existing angular frame. See the [changelog](docs/en/changelog.md) for the complete release history. The earlier v0.4.0 release remains available on the [GitHub releases page](https://github.com/LIJTA3U/sparse-to-raw/releases/tag/v0.4.0).
+The `v0.6.0-rc1` candidate brings the feature set developed in the v0.6.0 line together: RAW → Sparse conversion, logical RAW/Sparse comparison without intermediate RAW files, the standalone Sparse Validator, reusable JSON Batch Profiles, expanded QFIL integration, and structured JSON reports. It also centralizes the CLI/GUI version and adds Windows packaging automation for CLI and GUI builds. See the [English changelog](docs/en/changelog.md) or [русскую историю изменений](docs/ru/changelog.md) for details.
 
 ## Tests
 
@@ -124,7 +138,7 @@ Run the complete test suite from the repository root:
 python -m unittest discover -s tests -v
 ```
 
-The core suite covers chunk types, checksums, malformed and truncated data, safe output handling, info/verification modes, merging, SHA-256, JSON reports, progress callbacks, and cancellation. GUI smoke tests cover path validation, widgets, language and speed settings, recent files, worker integration, analysis, batch conversion, and the packaged self-test entry point. GitHub Actions runs core tests on Python 3.10–3.13 on Windows and Linux; GUI smoke tests run on Windows and Linux with PySide6.
+The core suite covers chunk types, checksums, malformed and truncated data, safe output handling, info/verification modes, merging, SHA-256, JSON reports, progress callbacks, and cancellation. GUI smoke tests cover path validation, widgets, language and speed settings, recent files, worker integration, analysis, batch conversion, and the packaged self-test entry point. GitHub Actions runs core tests on Python 3.10–3.14 on Windows and Linux; GUI smoke tests run on Windows and Linux with PySide6.
 
 ## Limitations and safety
 

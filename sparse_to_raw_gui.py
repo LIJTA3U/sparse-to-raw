@@ -32,16 +32,21 @@ import PySide6
 
 from diagnostics import DiagnosticStore, default_diagnostics_directory
 from qfil_xml import analyze_qfil_package, build_qfil_raw_images
+from raw_to_sparse import raw_to_sparse, RawToSparseError
+from image_compare import compare_images, ComparisonCancelled
+from sparse_validator import validate_sparse
+from batch_profiles import BatchProfileError, load_batch_profile, save_batch_profile
 
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMessageBox, QProgressBar, QPushButton, QSizePolicy, QTableWidget,
     QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget, QAbstractItemView,
-    QDialogButtonBox, QFormLayout, QInputDialog, QStyle,
+    QDialogButtonBox, QFormLayout, QInputDialog, QStyle, QSpinBox,
 )
 
 from sparse_to_raw import (
+    APP_VERSION,
     ConversionCancelled,
     _read_declared_raw_size,
     convert_sparse_to_raw,
@@ -54,7 +59,6 @@ from sparse_to_raw import (
     export_sparse_structure,
 )
 
-APP_VERSION = "v0.6.0-dev7"
 ORG_NAME = "LIJTA3U"
 APP_NAME = "sparse-to-raw"
 APP_USER_MODEL_ID = "LIJTA3U.sparse-to-raw"
@@ -70,6 +74,29 @@ COLORS = {
 I18N: dict[str, dict[str, str]] = {
     "ru": {
         "window_title": "sparse-to-raw", "main_heading": "Преобразование образа",
+        "compare_button": "Сравнить", "compare_title": "Логическое сравнение образов",
+        "validator_button": "Проверка", "validator_title": "Sparse Validator — проверка структуры и целостности",
+        "validator_input": "Android Sparse-образ", "validator_ready": "Выберите Sparse-образ для полной проверки.",
+        "validator_start": "Начать проверку", "validator_cancel": "Отменить проверку",
+        "validator_valid": "Образ прошёл проверку структуры и целостности.",
+        "validator_invalid": "Образ не прошёл проверку. Подробности приведены ниже.",
+        "validator_cancelled": "Проверка отменена пользователем.", "validator_close_running": "Проверка выполняется. Отменить и закрыть окно?",
+        "validator_check_passed": "ПРОЙДЕНО", "validator_check_missing": "НЕТ В ОБРАЗЕ", "validator_check_computed": "ВЫЧИСЛЕНО",
+        "validator_check_failed": "ОШИБКА", "validator_file": "Файл", "validator_status": "Статус",
+        "validator_file_size": "Размер файла", "validator_format": "Формат", "validator_expanded_size": "Размер после распаковки",
+        "validator_block_size": "Размер блока", "validator_blocks_chunks": "Блоков / чанков", "validator_header_checksum": "CRC32 в заголовке",
+        "validator_computed_crc": "Вычисленный CRC32", "validator_integrity": "Оценка целостности", "validator_chunk_counts": "Состав чанков",
+        "validator_sha": "SHA-256 логического содержимого", "validator_checks": "ПРОВЕРКИ", "validator_notes": "ЗАМЕЧАНИЯ",
+        "validator_warnings": "ПРЕДУПРЕЖДЕНИЯ", "validator_errors": "ОШИБКИ", "validator_elapsed": "Время",
+        "compare_left": "Первый образ (RAW или Sparse)", "compare_right": "Второй образ (RAW или Sparse)",
+        "compare_start": "Сравнить", "compare_cancel": "Отменить сравнение",
+        "compare_identical": "Логическое содержимое совпадает.", "compare_different": "Образы различаются.",
+        "compare_ready": "Выберите два RAW- или Android Sparse-образа.",
+        "compare_first_difference": "Первое отличие", "compare_left_hash": "SHA-256 первого образа",
+        "compare_right_hash": "SHA-256 второго образа", "compare_elapsed": "Время",
+        "compare_cancelled_message": "Сравнение отменено пользователем.",
+        "compare_close_running": "Сравнение выполняется. Отменить и закрыть окно?",
+        "raw_sparse": "RAW → Sparse", "raw_sparse_title": "Преобразование RAW → Sparse", "raw_sparse_start": "Создать Sparse-образ", "raw_sparse_block": "Размер блока (байт)", "raw_sparse_source": "Исходный RAW-файл", "raw_sparse_output": "Выходной Sparse-файл", "raw_sparse_done": "Sparse-образ успешно создан.",
         "source_label": "Исходный Sparse-образ", "output_label": "Выходной RAW-образ",
         "source_placeholder": "Выберите файл…", "output_placeholder": "Путь сохранения RAW-образа…",
         "browse": "Обзор", "drop_title": "Перетащите файл сюда", "drop_subtitle": "или выберите файл вручную",
@@ -101,6 +128,11 @@ I18N: dict[str, dict[str, str]] = {
         "filter_running": "Выполняются", "filter_success": "Успешные", "filter_failed": "Ошибки",
         "filter_cancelled": "Отменённые", "filter_skipped": "Пропущенные",
         "queue_add": "Добавить файлы…", "queue_remove": "Удалить выбранные", "queue_clear": "Очистить очередь",
+        "profile_load": "Загрузить профиль…", "profile_save": "Сохранить профиль…",
+        "profile_saved": "Профиль пакетной обработки сохранён.", "profile_loaded": "Профиль пакетной обработки загружен.",
+        "profile_replace_queue": "Заменить текущую очередь заданиями из профиля? Текущие задания будут потеряны.",
+        "profile_replace_title": "Загрузить профиль", "confirm_profile_overwrite": "Файл профиля уже существует:\n{path}\n\nЗаменить его?",
+        "profile_missing_inputs": "Профиль загружен, но не найдено входных файлов: {count}. Проверьте пути перед запуском.",
         "queue_move_up": "Вверх", "queue_move_down": "Вниз", "queue_retry": "Повторить выбранные",
         "queue_skip": "Пропустить выбранные", "queue_cancel_selected": "Отменить выбранные",
         "queue_pause": "Пауза", "queue_resume": "Продолжить", "queue_pausing": "Пауза после текущего файла…",
@@ -231,6 +263,29 @@ I18N: dict[str, dict[str, str]] = {
     },
     "en": {
         "window_title": "sparse-to-raw", "main_heading": "Image conversion",
+        "compare_button": "Compare", "compare_title": "Logical image comparison",
+        "validator_button": "Validate", "validator_title": "Sparse Validator — structure and integrity checks",
+        "validator_input": "Android Sparse image", "validator_ready": "Choose a Sparse image to run full validation.",
+        "validator_start": "Start validation", "validator_cancel": "Cancel validation",
+        "validator_valid": "The image passed structure and integrity validation.",
+        "validator_invalid": "The image failed validation. See details below.",
+        "validator_cancelled": "Validation cancelled by user.", "validator_close_running": "Validation is running. Cancel and close?",
+        "validator_check_passed": "PASSED", "validator_check_missing": "NOT PRESENT", "validator_check_computed": "COMPUTED",
+        "validator_check_failed": "FAILED", "validator_file": "File", "validator_status": "Status",
+        "validator_file_size": "File size", "validator_format": "Format", "validator_expanded_size": "Expanded RAW size",
+        "validator_block_size": "Block size", "validator_blocks_chunks": "Blocks / chunks", "validator_header_checksum": "Header CRC32",
+        "validator_computed_crc": "Computed CRC32", "validator_integrity": "Integrity assessment", "validator_chunk_counts": "Chunk counts",
+        "validator_sha": "Logical-content SHA-256", "validator_checks": "CHECKS", "validator_notes": "NOTES",
+        "validator_warnings": "WARNINGS", "validator_errors": "ERRORS", "validator_elapsed": "Elapsed",
+        "compare_left": "First image (RAW or Sparse)", "compare_right": "Second image (RAW or Sparse)",
+        "compare_start": "Compare", "compare_cancel": "Cancel comparison",
+        "compare_identical": "Logical contents are identical.", "compare_different": "The images differ.",
+        "compare_ready": "Choose two RAW or Android Sparse images.",
+        "compare_first_difference": "First difference", "compare_left_hash": "SHA-256 (first image)",
+        "compare_right_hash": "SHA-256 (second image)", "compare_elapsed": "Elapsed time",
+        "compare_cancelled_message": "Comparison cancelled by user.",
+        "compare_close_running": "Comparison is running. Cancel and close?",
+        "raw_sparse": "RAW → Sparse", "raw_sparse_title": "RAW → Sparse conversion", "raw_sparse_start": "Create Sparse image", "raw_sparse_block": "Block size (bytes)", "raw_sparse_source": "Input RAW file", "raw_sparse_output": "Output Sparse file", "raw_sparse_done": "Sparse image created successfully.",
         "source_label": "Input Sparse image", "output_label": "Output RAW image",
         "source_placeholder": "Choose a file…", "output_placeholder": "RAW output path…",
         "browse": "Browse", "drop_title": "Drop a file here", "drop_subtitle": "or select a file manually",
@@ -262,6 +317,11 @@ I18N: dict[str, dict[str, str]] = {
         "filter_running": "Running", "filter_success": "Successful", "filter_failed": "Failed",
         "filter_cancelled": "Cancelled", "filter_skipped": "Skipped",
         "queue_add": "Add files…", "queue_remove": "Remove selected", "queue_clear": "Clear queue",
+        "profile_load": "Load profile…", "profile_save": "Save profile…",
+        "profile_saved": "Batch profile saved.", "profile_loaded": "Batch profile loaded.",
+        "profile_replace_queue": "Replace the current queue with tasks from this profile? Current tasks will be lost.",
+        "profile_replace_title": "Load profile", "confirm_profile_overwrite": "The batch profile already exists:\n{path}\n\nReplace it?",
+        "profile_missing_inputs": "Profile loaded, but {count} input file(s) were not found. Check paths before running.",
         "queue_move_up": "Move up", "queue_move_down": "Move down", "queue_retry": "Retry selected",
         "queue_skip": "Skip selected", "queue_cancel_selected": "Cancel selected",
         "queue_pause": "Pause", "queue_resume": "Resume", "queue_pausing": "Pausing after current file…",
@@ -903,7 +963,7 @@ class ConversionWorkerObject(QObject):
                  operation: str = "convert", merge_sources: list[Path] | None = None,
                  verify_output: bool = False) -> None:
         super().__init__(); self.source = source; self.destination = destination; self.force = force
-        self.operation = operation; self.merge_sources = merge_sources or []
+        self.operation = operation; self.merge_sources = merge_sources or []; self.block_size = 4096
         self.verify_output = bool(verify_output); self._cancel_event = threading.Event()
     @Slot()
     def run(self) -> None:
@@ -920,6 +980,9 @@ class ConversionWorkerObject(QObject):
             elif self.operation == "inspect":
                 assert self.source is not None
                 result = inspect_sparse(self.source, mode="info", **kwargs)
+            elif self.operation == "raw_to_sparse":
+                assert self.source is not None and self.destination is not None
+                result = raw_to_sparse(self.source, self.destination, force=self.force, **{k:v for k,v in kwargs.items() if k in {"progress_callback", "cancel_requested", "calculate_sha256"}}, block_size=getattr(self, "block_size", 4096))
             elif self.operation == "merge":
                 assert self.destination is not None
                 result = merge_sparse_to_raw(
@@ -928,17 +991,17 @@ class ConversionWorkerObject(QObject):
                 )
             else:
                 raise ValueError(f"Unknown worker operation: {self.operation}")
-        except ConversionCancelled: self.cancelled.emit()
+        except (ConversionCancelled, InterruptedError): self.cancelled.emit()
         except Exception as exc:
             self.log.emit("error", f"{type(exc).__name__}: {exc}\n\n{traceback.format_exc()}"); self.failed.emit(str(exc))
         else:
             elapsed = max(time.perf_counter() - started_at, 0.0)
-            processed_bytes = int(result.get("raw_size_bytes", result.get("output_size_bytes", 0)) or 0)
+            processed_bytes = int(result.get("raw_size_bytes", result.get("input_size_bytes", result.get("output_size_bytes", 0))) or 0)
             result["operation_metrics"] = {
                 "operation": self.operation,
                 "duration_seconds": round(elapsed, 6),
                 "processed_bytes": processed_bytes,
-                "output_bytes": int(result.get("output_size_bytes", 0) or 0),
+                "output_bytes": int(result.get("output_size_bytes", result.get("sparse_size_bytes", 0)) or 0),
                 "chunks": int(result.get("total_chunks", 0) or 0),
                 "average_bytes_per_second": round(processed_bytes / elapsed, 2) if elapsed > 0 else 0.0,
             }
@@ -959,13 +1022,15 @@ class BatchWorkerObject(QObject):
 
     def __init__(self, sources: list[Path], output_dir: Path, overwrite: bool,
                  verify_output: bool = False, task_ids: list[str] | None = None,
-                 qfil_configs: dict[str, dict[str, Any]] | None = None) -> None:
+                 qfil_configs: dict[str, dict[str, Any]] | None = None,
+                 raw_to_sparse_configs: dict[str, dict[str, Any]] | None = None) -> None:
         super().__init__()
         self.sources = list(sources)
         self.output_dir = output_dir
         self.overwrite = overwrite
         self.verify_output = bool(verify_output)
         self.qfil_configs = dict(qfil_configs or {})
+        self.raw_to_sparse_configs = dict(raw_to_sparse_configs or {})
         self.task_ids = list(task_ids) if task_ids is not None else [str(i) for i in range(len(self.sources))]
         if len(self.task_ids) != len(self.sources):
             raise ValueError("task_ids must contain exactly one ID per source")
@@ -1067,7 +1132,9 @@ class BatchWorkerObject(QObject):
         for i, source_item in enumerate(self.sources):
             if self.task_ids[i] in self.qfil_configs:
                 continue
-            key = str((self.output_dir / f"{source_item.stem}_raw.img").resolve()).casefold()
+            raw_config = self.raw_to_sparse_configs.get(self.task_ids[i])
+            planned_path = Path(raw_config["output"]) if raw_config else (self.output_dir / f"{source_item.stem}_raw.img")
+            key = str(planned_path.resolve()).casefold()
             planned_outputs.setdefault(key, []).append(i)
         collision_indices = {
             index for indices in planned_outputs.values() if len(indices) > 1 for index in indices
@@ -1076,13 +1143,13 @@ class BatchWorkerObject(QObject):
         try:
             try:
                 sparse_sources = [source for source, task_id in zip(self.sources, self.task_ids)
-                                  if task_id not in self.qfil_configs]
+                                  if task_id not in self.qfil_configs and task_id not in self.raw_to_sparse_configs]
                 if sparse_sources:
                     preflight_report = preflight_batch(
                         sparse_sources, self.output_dir, overwrite=self.overwrite
                     )
                 else:
-                    preflight_report = {"skipped": True, "reason": "QFIL-only queue"}
+                    preflight_report = {"skipped": True, "reason": "No Sparse → RAW preflight required for RAW → Sparse/QFIL tasks"}
                 if sparse_sources:
                     self.log.emit(
                         "success",
@@ -1123,10 +1190,13 @@ class BatchWorkerObject(QObject):
                         continue
 
                     qfil_config = self.qfil_configs.get(task_id)
-                    destination = (Path(qfil_config["output_dir"]) if qfil_config else self.output_dir / f"{source.stem}_raw.img")
+                    raw_config = self.raw_to_sparse_configs.get(task_id)
+                    destination = (Path(qfil_config["output_dir"]) if qfil_config else (Path(raw_config["output"]) if raw_config else self.output_dir / f"{source.stem}_raw.img"))
                     self.log.emit("info", f"[{index+1}/{total}] {source}")
                     row: dict[str, Any] = {"input": str(source), "output": str(destination), "status": "failed", "task_id": task_id,
-                                           "task_type": "qfil" if qfil_config else "sparse"}
+                                           "task_type": "qfil" if qfil_config else ("raw_to_sparse" if raw_config else "sparse")}
+                    if raw_config:
+                        row["raw_to_sparse"] = dict(raw_config)
                     if qfil_config:
                         row["qfil"] = {
                             "rawprogram_files": list(qfil_config.get("rawprogram_files", [])),
@@ -1156,6 +1226,23 @@ class BatchWorkerObject(QObject):
                             )
                             row.update({"status": "success", "result": result})
                             self.log.emit("success", f"[{index+1}/{total}] QFIL RAW assembly completed: {destination}")
+                        elif raw_config:
+                            if index in collision_indices:
+                                raise ValueError(
+                                    f"Output-name collision: multiple queue tasks map to {destination}. "
+                                    "Choose distinct output paths."
+                                )
+                            def raw_progress(data: dict[str, Any], *, _idx=index, _task_id=task_id) -> None:
+                                current = int(data.get("percent", 0))
+                                self.progress.emit({**data, "queue_index": _idx, "queue_total": total,
+                                    "queue_percent": int((_idx + current / 100) * 100 / max(total, 1)),
+                                    "queue_current_file": str(source), "queue_task_id": _task_id})
+                            result = raw_to_sparse(source, destination, block_size=int(raw_config.get("block_size", 4096)),
+                                force=self.overwrite, progress_callback=raw_progress,
+                                cancel_requested=lambda: self._cancel_event.is_set() or task_cancel.is_set(),
+                                calculate_sha256=True)
+                            row.update({"status": "success", "result": result})
+                            self.log.emit("success", f"[{index+1}/{total}] RAW → Sparse completed: {destination}")
                         else:
                             if index in collision_indices:
                                 raise ValueError(
@@ -1181,7 +1268,7 @@ class BatchWorkerObject(QObject):
                         def cancel_requested() -> bool:
                             return self._cancel_event.is_set() or task_cancel.is_set()
 
-                        if not qfil_config:
+                        if not qfil_config and not raw_config:
                             result = convert_sparse_to_raw(
                                 source, destination, force=self.overwrite, calculate_sha256=True,
                                 verify_output=self.verify_output,
@@ -1190,7 +1277,7 @@ class BatchWorkerObject(QObject):
                             )
                             row.update({"status": "success", "result": result})
                             self.log.emit("success", f"[{index+1}/{total}] Completed: {destination}")
-                    except ConversionCancelled:
+                    except (ConversionCancelled, InterruptedError):
                         with self._control:
                             skipped = task_id in self._skipped_task_ids
                         if skipped:
@@ -1205,12 +1292,12 @@ class BatchWorkerObject(QObject):
                     elapsed = max(time.perf_counter() - task_started_at, 0.0)
                     result_metrics = row.get("result", {}).get("operation_metrics", {}) if isinstance(row.get("result"), dict) else {}
                     successful_result = row.get("result", {}) if isinstance(row.get("result"), dict) else {}
-                    processed_bytes = int(result_metrics.get("processed_bytes", successful_result.get("raw_size_bytes", 0)) or 0)
+                    processed_bytes = int(result_metrics.get("processed_bytes", successful_result.get("raw_size_bytes", successful_result.get("input_size_bytes", 0))) or 0)
                     row["operation_metrics"] = {
                         "operation": "batch-convert",
                         "duration_seconds": round(elapsed, 6),
                         "processed_bytes": processed_bytes,
-                        "output_bytes": int(result_metrics.get("output_bytes", successful_result.get("output_size_bytes", 0)) or 0),
+                        "output_bytes": int(result_metrics.get("output_bytes", successful_result.get("output_size_bytes", successful_result.get("sparse_size_bytes", 0))) or 0),
                         "chunks": int(result_metrics.get("chunks", successful_result.get("total_chunks", 0)) or 0),
                         "average_bytes_per_second": round(processed_bytes / elapsed, 2) if elapsed > 0 else 0.0,
                     }
@@ -2042,6 +2129,611 @@ class QFILDialog(QDialog):
             QMessageBox.critical(self, "QFIL", f"{type(exc).__name__}: {exc}")
 
 
+class ImageComparisonWorker(QObject):
+    progress = Signal(dict)
+    succeeded = Signal(dict)
+    failed = Signal(str)
+    cancelled = Signal()
+    finished = Signal()
+
+    def __init__(self, left: Path, right: Path) -> None:
+        super().__init__()
+        self.left = left
+        self.right = right
+        self._cancel_event = threading.Event()
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            result = compare_images(
+                self.left, self.right,
+                progress_callback=self.progress.emit,
+                cancel_requested=self._cancel_event.is_set,
+            )
+        except (ComparisonCancelled, InterruptedError):
+            self.cancelled.emit()
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+        else:
+            self.succeeded.emit(result)
+        finally:
+            self.finished.emit()
+
+    def request_cancel(self) -> None:
+        self._cancel_event.set()
+
+
+class ImageComparisonDialog(QDialog):
+    """Compare RAW and/or Sparse files by their expanded logical bytes."""
+    def __init__(self, parent: "MainWindow") -> None:
+        super().__init__(parent)
+        self.main = parent
+        self.thread: QThread | None = None
+        self.worker: ImageComparisonWorker | None = None
+        self.result: dict[str, Any] | None = None
+        self._close_when_finished = False
+        self.setWindowTitle(parent.t("compare_title"))
+        self.resize(900, 510)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(14, 14, 14, 14)
+        root.setSpacing(9)
+        form = QFormLayout()
+        self.left_edit = QLineEdit()
+        self.right_edit = QLineEdit()
+        left_row = QHBoxLayout()
+        left_row.addWidget(self.left_edit, 1)
+        left_browse = QPushButton(parent.t("browse"))
+        left_browse.clicked.connect(lambda: self._browse(self.left_edit))
+        left_row.addWidget(left_browse)
+        right_row = QHBoxLayout()
+        right_row.addWidget(self.right_edit, 1)
+        right_browse = QPushButton(parent.t("browse"))
+        right_browse.clicked.connect(lambda: self._browse(self.right_edit))
+        right_row.addWidget(right_browse)
+        form.addRow(parent.t("compare_left"), left_row)
+        form.addRow(parent.t("compare_right"), right_row)
+        root.addLayout(form)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        root.addWidget(self.progress)
+        self.status = QLabel(parent.t("compare_ready"))
+        self.status.setWordWrap(True)
+        self.status.setStyleSheet(
+            f"color:{COLORS['cyan']};background:{COLORS['panel']};"
+            f"border:1px solid {COLORS['border']};padding:8px"
+        )
+        root.addWidget(self.status)
+        self.details = QTextEdit()
+        self.details.setReadOnly(True)
+        self.details.setFont(QFont("Consolas", 9))
+        root.addWidget(self.details, 1)
+        buttons = QHBoxLayout()
+        self.compare_button = QPushButton(parent.t("compare_start"))
+        self.cancel_button = QPushButton(parent.t("compare_cancel"))
+        self.cancel_button.setEnabled(False)
+        self.save_button = QPushButton(parent.t("save_json"))
+        self.save_button.setEnabled(False)
+        close_button = QPushButton(parent.t("diagnostics_close"))
+        buttons.addWidget(self.compare_button)
+        buttons.addWidget(self.cancel_button)
+        buttons.addWidget(self.save_button)
+        buttons.addStretch()
+        buttons.addWidget(close_button)
+        root.addLayout(buttons)
+        self.compare_button.clicked.connect(self._start)
+        self.cancel_button.clicked.connect(self._cancel)
+        self.save_button.clicked.connect(self._save_report)
+        close_button.clicked.connect(self.close)
+        self.setStyleSheet(
+            f"QDialog{{background:{COLORS['background']};color:{COLORS['text']}}} "
+            f"QLineEdit,QTextEdit{{background:#07111b;color:{COLORS['text']};border:1px solid #29434f}} "
+            f"QPushButton{{background:#0a1b27;color:{COLORS['cyan']};border:1px solid #24505e;padding:7px;border-radius:4px}} "
+            f"QProgressBar{{background:#111d28;border:1px solid #24414e;height:14px}} "
+            f"QProgressBar::chunk{{background:{COLORS['cyan']}}}"
+        )
+
+    def _browse(self, edit: QLineEdit) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, self.main.t("source_file"), str(Path.home()),
+            "Image files (*.img *.sparse *.raw *.bin);;All files (*)",
+        )
+        if path:
+            edit.setText(path)
+
+    def _start(self) -> None:
+        if self.thread is not None and self.thread.isRunning():
+            return
+        left = Path(self.left_edit.text().strip()).expanduser().resolve()
+        right = Path(self.right_edit.text().strip()).expanduser().resolve()
+        if not left.is_file() or not right.is_file():
+            missing = left if not left.is_file() else right
+            QMessageBox.warning(self, self.windowTitle(), self.main.t("missing_source").format(path=missing))
+            return
+        if self.main.operation_running(exclude=self):
+            QMessageBox.information(self, self.windowTitle(), self.main.t("another_operation"))
+            return
+        self.result = None
+        self.details.clear()
+        self.progress.setValue(0)
+        self.status.setText(self.main.t("compare_ready"))
+        worker = ImageComparisonWorker(left, right)
+        self.worker = worker
+        worker.progress.connect(self._progress)
+        worker.succeeded.connect(self._success)
+        worker.failed.connect(self._failure)
+        worker.cancelled.connect(self._cancelled)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._finished)
+        self.thread = thread
+        self.compare_button.setEnabled(False)
+        self.cancel_button.setEnabled(True)
+        self.save_button.setEnabled(False)
+        thread.start()
+
+    def _progress(self, data: dict[str, Any]) -> None:
+        percent = int(data.get("percent", 0))
+        self.progress.setValue(max(0, min(100, percent)))
+        done = int(data.get("processed_bytes", 0))
+        total = int(data.get("total_bytes", 0))
+        self.status.setText(
+            f"{percent}% · {format_bytes(done, self.main.language)} / "
+            f"{format_bytes(total, self.main.language)}"
+        )
+
+    def _success(self, result: dict[str, Any]) -> None:
+        self.result = result
+        self.progress.setValue(100)
+        same = bool(result.get("identical"))
+        self.status.setText(self.main.t("compare_identical" if same else "compare_different"))
+        first = result.get("first_difference_offset")
+        difference = "—" if first is None else f"{first:,} bytes (0x{first:X})"
+        lines = [
+            f"{self.main.t('compare_left')}: {result['left']} [{result['left_format']}]",
+            f"{self.main.t('compare_right')}: {result['right']} [{result['right_format']}]",
+            "Logical sizes: "
+            f"{format_bytes(result['left_logical_size_bytes'], self.main.language)} / "
+            f"{format_bytes(result['right_logical_size_bytes'], self.main.language)}",
+            f"{self.main.t('compare_first_difference')}: {difference}",
+            f"{self.main.t('compare_left_hash')}: {result['left_sha256']}",
+            f"{self.main.t('compare_right_hash')}: {result['right_sha256']}",
+            f"{self.main.t('compare_elapsed')}: {result['duration_seconds']:.2f} s",
+        ]
+        self.details.setPlainText("\n".join(lines))
+        self.save_button.setEnabled(True)
+        self.main.last_result = result
+        self.main.report_button.setEnabled(True)
+        self.main.append_log(
+            "success" if same else "warning",
+            f"Logical image comparison completed: {'identical' if same else 'different'}",
+            category="analysis",
+            details={
+                "first_difference_offset": first,
+                "left_sha256": result["left_sha256"],
+                "right_sha256": result["right_sha256"],
+            },
+        )
+
+    def _failure(self, message: str) -> None:
+        self.status.setText(self.main.t("status_error"))
+        self.details.append(message)
+        QMessageBox.critical(self, self.windowTitle(), message)
+
+    def _cancelled(self) -> None:
+        self.status.setText(self.main.t("status_cancelled"))
+        self.details.append(self.main.t("compare_cancelled_message"))
+
+    def _cancel(self) -> None:
+        if self.worker is not None:
+            self.worker.request_cancel()
+            self.cancel_button.setEnabled(False)
+
+    def _finished(self) -> None:
+        self.worker = None
+        self.thread = None
+        self.compare_button.setEnabled(True)
+        self.cancel_button.setEnabled(False)
+        if self._close_when_finished:
+            self._close_when_finished = False
+            self.close()
+
+    def _save_report(self) -> None:
+        if self.result is None:
+            return
+        filename, _ = QFileDialog.getSaveFileName(
+            self, self.main.t("save_json"), "image-comparison-report.json", "JSON (*.json)"
+        )
+        if not filename:
+            return
+        try:
+            Path(filename).write_text(
+                json.dumps(self.result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+        except OSError as exc:
+            QMessageBox.critical(self, self.windowTitle(), str(exc))
+            return
+        self.main.append_log("success", f"Comparison report saved: {filename}", category="analysis")
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        if self.thread is not None and self.thread.isRunning():
+            answer = QMessageBox.question(
+                self, self.windowTitle(), self.main.t("compare_close_running"),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                self._close_when_finished = True
+                self._cancel()
+            event.ignore()
+            return
+        event.accept()
+
+
+class SparseValidatorWorker(QObject):
+    progress = Signal(dict)
+    succeeded = Signal(dict)
+    failed = Signal(str)
+    cancelled = Signal()
+    finished = Signal()
+
+    def __init__(self, source: Path) -> None:
+        super().__init__()
+        self.source = source
+        self._cancel_event = threading.Event()
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            result = validate_sparse(
+                self.source,
+                calculate_sha256=True,
+                progress_callback=self.progress.emit,
+                cancel_requested=self._cancel_event.is_set,
+            )
+        except ConversionCancelled:
+            self.cancelled.emit()
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+        else:
+            self.succeeded.emit(result)
+        finally:
+            self.finished.emit()
+
+    def request_cancel(self) -> None:
+        self._cancel_event.set()
+
+
+class SparseValidatorDialog(QDialog):
+    """Run a complete Sparse validation without creating a RAW image."""
+    def __init__(self, parent: "MainWindow", initial_path: str = "") -> None:
+        super().__init__(parent)
+        self.main = parent
+        self.thread: QThread | None = None
+        self.worker: SparseValidatorWorker | None = None
+        self.result: dict[str, Any] | None = None
+        self._close_when_finished = False
+        self.setWindowTitle(parent.t("validator_title"))
+        self.resize(850, 560)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(14, 14, 14, 14)
+        root.setSpacing(9)
+        form = QFormLayout()
+        self.input_edit = QLineEdit(initial_path)
+        row = QHBoxLayout()
+        row.addWidget(self.input_edit, 1)
+        browse = QPushButton(parent.t("browse"))
+        browse.clicked.connect(self._browse)
+        row.addWidget(browse)
+        form.addRow(parent.t("validator_input"), row)
+        root.addLayout(form)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        root.addWidget(self.progress)
+        self.status = QLabel(parent.t("validator_ready"))
+        self.status.setWordWrap(True)
+        self.status.setStyleSheet(
+            f"color:{COLORS['cyan']};background:{COLORS['panel']};"
+            f"border:1px solid {COLORS['border']};padding:8px"
+        )
+        root.addWidget(self.status)
+        self.details = QTextEdit()
+        self.details.setReadOnly(True)
+        self.details.setFont(QFont("Consolas", 9))
+        root.addWidget(self.details, 1)
+        buttons = QHBoxLayout()
+        self.validate_button = QPushButton(parent.t("validator_start"))
+        self.cancel_button = QPushButton(parent.t("validator_cancel"))
+        self.cancel_button.setEnabled(False)
+        self.save_button = QPushButton(parent.t("save_json"))
+        self.save_button.setEnabled(False)
+        close_button = QPushButton(parent.t("diagnostics_close"))
+        buttons.addWidget(self.validate_button)
+        buttons.addWidget(self.cancel_button)
+        buttons.addWidget(self.save_button)
+        buttons.addStretch()
+        buttons.addWidget(close_button)
+        root.addLayout(buttons)
+        self.validate_button.clicked.connect(self._start)
+        self.cancel_button.clicked.connect(self._cancel)
+        self.save_button.clicked.connect(self._save_report)
+        close_button.clicked.connect(self.close)
+        self.setStyleSheet(
+            f"QDialog{{background:{COLORS['background']};color:{COLORS['text']}}} "
+            f"QLineEdit,QTextEdit{{background:#07111b;color:{COLORS['text']};border:1px solid #29434f}} "
+            f"QPushButton{{background:#0a1b27;color:{COLORS['cyan']};border:1px solid #24505e;padding:7px;border-radius:4px}} "
+            f"QProgressBar{{background:#111d28;border:1px solid #24414e;height:14px}} "
+            f"QProgressBar::chunk{{background:{COLORS['cyan']}}}"
+        )
+
+    def _browse(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, self.main.t("validator_input"), self.input_edit.text() or str(Path.home()),
+            "Android Sparse images (*.img *.sparse *.bin);;All files (*)",
+        )
+        if path:
+            self.input_edit.setText(path)
+
+    def _start(self) -> None:
+        if self.thread is not None and self.thread.isRunning():
+            return
+        source = Path(self.input_edit.text().strip()).expanduser().resolve()
+        if not source.is_file():
+            QMessageBox.warning(self, self.windowTitle(), self.main.t("missing_source").format(path=source))
+            return
+        if self.main.operation_running(exclude=self):
+            QMessageBox.information(self, self.windowTitle(), self.main.t("another_operation"))
+            return
+        self.result = None
+        self.details.clear()
+        self.progress.setValue(0)
+        self.status.setText(self.main.t("validator_ready"))
+        worker = SparseValidatorWorker(source)
+        self.worker = worker
+        worker.progress.connect(self._progress)
+        worker.succeeded.connect(self._success)
+        worker.failed.connect(self._failure)
+        worker.cancelled.connect(self._cancelled)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._finished)
+        self.thread = thread
+        self.validate_button.setEnabled(False)
+        self.cancel_button.setEnabled(True)
+        self.save_button.setEnabled(False)
+        thread.start()
+
+    def _progress(self, data: dict[str, Any]) -> None:
+        percent = int(data.get("percent", 0))
+        self.progress.setValue(max(0, min(100, percent)))
+        done = int(data.get("processed_bytes", 0))
+        total = int(data.get("expected_bytes", 0))
+        self.status.setText(
+            f"{percent}% · {format_bytes(done, self.main.language)} / "
+            f"{format_bytes(total, self.main.language)}"
+        )
+
+    def _success(self, result: dict[str, Any]) -> None:
+        self.result = result
+        self.progress.setValue(100)
+        valid = bool(result.get("valid"))
+        self.status.setText(self.main.t("validator_valid" if valid else "validator_invalid"))
+        t = self.main.t
+        lines = [
+            f"{t('validator_file')}: {result.get('input', '')}",
+            f"{t('validator_status')}: {result.get('status', 'unknown')}",
+            f"{t('validator_file_size')}: {format_bytes(int(result.get('file_size_bytes', 0)), self.main.language)}",
+        ]
+        if result.get("format"):
+            lines.append(f"{t('validator_format')}: {result['format']}")
+        if result.get("raw_size_bytes") is not None:
+            lines.append(f"{t('validator_expanded_size')}: {format_bytes(int(result['raw_size_bytes']), self.main.language)}")
+        if result.get("header"):
+            header = result["header"]
+            lines.extend([
+                f"{t('validator_block_size')}: {header.get('block_size', '—')} bytes",
+                f"{t('validator_blocks_chunks')}: {result.get('total_blocks', header.get('total_blocks', '—'))} / {result.get('total_chunks', header.get('total_chunks', '—'))}",
+                f"{t('validator_header_checksum')}: {result.get('header_checksum', header.get('header_checksum', '—'))}",
+                f"{t('validator_computed_crc')}: {result.get('computed_crc32', '—')}",
+                f"{t('validator_integrity')}: {result.get('integrity_level', '—')}",
+            ])
+        if result.get("chunk_counts"):
+            lines.append(t("validator_chunk_counts") + ": " + ", ".join(f"{key}={value}" for key, value in result["chunk_counts"].items()))
+        if result.get("logical_sha256"):
+            lines.append(f"{t('validator_sha')}: {result['logical_sha256']}")
+        lines.append("\n" + t("validator_checks"))
+        check_names = {
+            "fixed_header": "Fixed header", "fixed_header_read": "Fixed header read", "sparse_header": "Sparse header",
+            "chunk_headers_and_payload_sizes": "Chunk headers and payload sizes",
+            "supported_chunk_types": "Supported chunk types", "expanded_block_accounting": "Expanded block accounting",
+            "file_boundary_and_trailing_data": "File boundary and trailing data",
+            "crc32_checkpoints": "CRC32 checkpoint chunks", "header_image_checksum": "Header image checksum",
+            "logical_sha256": "Logical-content SHA-256", "full_sparse_validation": "Full Sparse validation",
+        }
+        if self.main.language == "ru":
+            check_names.update({
+                "fixed_header": "Фиксированный заголовок", "fixed_header_read": "Чтение фиксированного заголовка", "sparse_header": "Заголовок Sparse",
+                "chunk_headers_and_payload_sizes": "Заголовки чанков и размеры данных",
+                "supported_chunk_types": "Поддерживаемые типы чанков", "expanded_block_accounting": "Учёт раскрытых блоков",
+                "file_boundary_and_trailing_data": "Границы файла и лишние данные",
+                "crc32_checkpoints": "CRC32 checkpoint-чанки", "header_image_checksum": "Общая CRC32 из заголовка",
+                "logical_sha256": "SHA-256 логического содержимого", "full_sparse_validation": "Полная проверка Sparse",
+            })
+        state_names = {"passed": t("validator_check_passed"), "not_present": t("validator_check_missing"),
+                       "computed": t("validator_check_computed"), "failed": t("validator_check_failed")}
+        for check in result.get("checks", []):
+            state = state_names.get(check.get("status", ""), str(check.get("status", "unknown")).upper())
+            details = f" — {check['details']}" if check.get("details") else ""
+            lines.append(f"[{state}] {check_names.get(check.get('name'), check.get('name', 'check'))}{details}")
+        advisory_map = {
+            "The header image checksum is not set.": "В заголовке не задана общая CRC32.",
+            "The image contains no CRC32 checkpoint chunks.": "В образе отсутствуют CRC32 checkpoint-чанки.",
+            "No stored CRC32 integrity values are present. The structure and payload were read successfully, but the file does not provide an internal checksum for independent corruption detection.": "В образе нет сохранённых значений CRC32. Структура и данные прочитаны успешно, но файл не содержит встроенной контрольной суммы для независимого обнаружения повреждений.",
+        }
+        def localize_advisory(value: str) -> str:
+            return advisory_map.get(value, value) if self.main.language == "ru" else value
+        if result.get("notes"):
+            lines.append("\n" + t("validator_notes"))
+            lines.extend(f"• {localize_advisory(item)}" for item in result["notes"])
+        if result.get("warnings"):
+            lines.append("\n" + t("validator_warnings"))
+            lines.extend(f"• {localize_advisory(item)}" for item in result["warnings"])
+        if result.get("errors"):
+            lines.append("\n" + t("validator_errors"))
+            lines.extend(f"• {item}" for item in result["errors"])
+        lines.append(f"\n{t('validator_elapsed')}: {result.get('duration_seconds', 0):.3f} s")
+        self.details.setPlainText("\n".join(lines))
+        self.save_button.setEnabled(True)
+        self.main.last_result = result
+        self.main.report_button.setEnabled(True)
+        self.main.append_log(
+            "success" if valid else "error",
+            f"Sparse validation completed: {result.get('status')}",
+            category="analysis",
+            details={"errors": result.get("errors", []), "warnings": result.get("warnings", [])},
+        )
+
+    def _failure(self, message: str) -> None:
+        self.status.setText(self.main.t("status_error"))
+        self.details.append(message)
+        QMessageBox.critical(self, self.windowTitle(), message)
+
+    def _cancelled(self) -> None:
+        self.status.setText(self.main.t("status_cancelled"))
+        self.details.append(self.main.t("validator_cancelled"))
+
+    def _cancel(self) -> None:
+        if self.worker is not None:
+            self.worker.request_cancel()
+            self.cancel_button.setEnabled(False)
+
+    def _finished(self) -> None:
+        self.worker = None
+        self.thread = None
+        self.validate_button.setEnabled(True)
+        self.cancel_button.setEnabled(False)
+        if self._close_when_finished:
+            self._close_when_finished = False
+            self.close()
+
+    def _save_report(self) -> None:
+        if self.result is None:
+            return
+        filename, _ = QFileDialog.getSaveFileName(
+            self, self.main.t("save_json"), "sparse-validation-report.json", "JSON (*.json)"
+        )
+        if not filename:
+            return
+        try:
+            Path(filename).write_text(
+                json.dumps(self.result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+        except OSError as exc:
+            QMessageBox.critical(self, self.windowTitle(), str(exc))
+            return
+        self.main.append_log("success", f"Sparse validation report saved: {filename}", category="analysis")
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        if self.thread is not None and self.thread.isRunning():
+            answer = QMessageBox.question(
+                self, self.windowTitle(), self.main.t("validator_close_running"),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                self._close_when_finished = True
+                self._cancel()
+            event.ignore()
+            return
+        event.accept()
+
+
+class RawToSparseDialog(QDialog):
+    """Dedicated GUI for streaming RAW to Android Sparse conversion."""
+    def __init__(self, parent: "MainWindow") -> None:
+        super().__init__(parent)
+        self.main = parent
+        self.thread: QThread | None = None
+        self.worker: ConversionWorkerObject | None = None
+        self.setWindowTitle(parent.t("raw_sparse_title"))
+        self.resize(760, 330)
+        root = QVBoxLayout(self)
+        form = QFormLayout()
+        self.source = QLineEdit()
+        self.output = QLineEdit()
+        source_row = QHBoxLayout(); source_row.addWidget(self.source, 1)
+        source_browse = QPushButton(parent.t("browse")); source_browse.clicked.connect(self._browse_source); source_row.addWidget(source_browse)
+        output_row = QHBoxLayout(); output_row.addWidget(self.output, 1)
+        output_browse = QPushButton(parent.t("browse")); output_browse.clicked.connect(self._browse_output); output_row.addWidget(output_browse)
+        form.addRow(parent.t("raw_sparse_source"), source_row)
+        form.addRow(parent.t("raw_sparse_output"), output_row)
+        self.block_size = QSpinBox(); self.block_size.setRange(4, 1048576); self.block_size.setSingleStep(4); self.block_size.setValue(4096)
+        self.block_size.setToolTip("Must be divisible by 4; default: 4096 bytes")
+        form.addRow(parent.t("raw_sparse_block"), self.block_size)
+        root.addLayout(form)
+        self.progress = QProgressBar(); self.progress.setRange(0,100); root.addWidget(self.progress)
+        self.status = QLabel(parent.t("ready")); root.addWidget(self.status)
+        self.log = QTextEdit(); self.log.setReadOnly(True); self.log.setMaximumHeight(100); root.addWidget(self.log)
+        buttons = QHBoxLayout(); self.start = QPushButton(parent.t("raw_sparse_start")); self.cancel = QPushButton(parent.t("cancel")); self.cancel.setEnabled(False)
+        buttons.addWidget(self.start); buttons.addWidget(self.cancel); buttons.addStretch(); close = QPushButton("Close" if parent.language == "en" else "Закрыть"); buttons.addWidget(close); root.addLayout(buttons)
+        self.start.clicked.connect(self._start); self.cancel.clicked.connect(self._cancel); close.clicked.connect(self.close)
+
+    def _browse_source(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, self.main.t("raw_sparse_source"), str(Path.home()), "RAW images (*.img *.bin *.raw);;All files (*)")
+        if path:
+            self.source.setText(path)
+            if not self.output.text().strip(): self.output.setText(str(Path(path).with_suffix(".sparse")))
+
+    def _browse_output(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, self.main.t("raw_sparse_output"), self.output.text() or str(Path.home() / "output.sparse"), "Android Sparse (*.sparse *.img);;All files (*)")
+        if path: self.output.setText(path)
+
+    def _start(self) -> None:
+        if self.thread is not None and self.thread.isRunning(): return
+        source = Path(self.source.text().strip()).expanduser().resolve()
+        destination = Path(self.output.text().strip()).expanduser().resolve()
+        if not source.is_file(): QMessageBox.warning(self, self.windowTitle(), f"Input RAW file not found:\n{source}"); return
+        if source == destination: QMessageBox.warning(self, self.windowTitle(), self.main.t("same_path")); return
+        if destination.exists() and QMessageBox.question(self, self.windowTitle(), self.main.t("confirm_overwrite").format(path=destination), QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No, QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes: return
+        if self.main.operation_running(exclude=self): QMessageBox.information(self, self.windowTitle(), self.main.t("another_operation")); return
+        try:
+            size = source.stat().st_size; block = self.block_size.value()
+            if block % 4 or size == 0 or size % block: raise RawToSparseError(f"RAW size ({size}) must be non-zero and divisible by block size ({block})")
+            if not destination.parent.is_dir(): raise FileNotFoundError(destination.parent)
+        except Exception as exc: QMessageBox.warning(self, self.windowTitle(), str(exc)); return
+        worker = ConversionWorkerObject(source, destination, destination.exists(), operation="raw_to_sparse")
+        worker.block_size = block; self.worker = worker
+        worker.progress.connect(self._progress); worker.log.connect(self._log); worker.succeeded.connect(self._success); worker.failed.connect(self._failure); worker.cancelled.connect(self._cancelled)
+        thread = QThread(self); worker.moveToThread(thread); thread.started.connect(worker.run); worker.finished.connect(thread.quit); worker.finished.connect(worker.deleteLater); thread.finished.connect(thread.deleteLater); thread.finished.connect(self._finished)
+        self.thread = thread; self.start.setEnabled(False); self.cancel.setEnabled(True); thread.start()
+
+    def _progress(self, data: dict[str, Any]) -> None:
+        percent = int(data.get("percent", 0)); self.progress.setValue(max(0,min(100,percent)))
+        done = int(data.get("completed_blocks", 0)); total = int(data.get("total_blocks", 0))
+        self.status.setText(f"{percent}% · {done:,} / {total:,} blocks".replace(",", " "))
+
+    def _log(self, level: str, message: str) -> None: self.log.append(f"[{level.upper()}] {message}")
+    def _success(self, result: dict[str, Any]) -> None:
+        self.progress.setValue(100); self.status.setText(self.main.t("raw_sparse_done"))
+        self.log.append(f"Output: {result['output']}\nChunks: {result['total_chunks']} · CRC32: {result['computed_crc32']}\nSHA-256: {result.get('sha256') or 'not calculated'}")
+        self.main.add_recent(result["input"])
+    def _failure(self, message: str) -> None: self._log("error", message); QMessageBox.critical(self, self.windowTitle(), message)
+    def _cancelled(self) -> None: self.status.setText(self.main.t("status_cancelled")); self._log("warning", "Conversion cancelled; temporary output removed.")
+    def _cancel(self) -> None:
+        if self.worker: self.worker.request_cancel(); self.cancel.setEnabled(False)
+    def _finished(self) -> None:
+        self.worker = None; self.thread = None; self.start.setEnabled(True); self.cancel.setEnabled(False)
+
+
 class BatchQueueDialog(QDialog):
     """Interactive sequential queue with task-level control and status filtering."""
     ROLE_SOURCE = int(Qt.ItemDataRole.UserRole)
@@ -2051,6 +2743,7 @@ class BatchQueueDialog(QDialog):
     ROLE_REQUEST_ORIGINAL_STATUS = ROLE_SOURCE + 4
     ROLE_TASK_TYPE = ROLE_SOURCE + 5
     ROLE_QFIL_CONFIG = ROLE_SOURCE + 6
+    ROLE_RAW_CONFIG = ROLE_SOURCE + 7
 
     STATUS_COLORS = {
         "waiting": COLORS["muted"], "running": COLORS["cyan"],
@@ -2079,6 +2772,18 @@ class BatchQueueDialog(QDialog):
         hint.setWordWrap(True)
         hint.setStyleSheet(f"color:{COLORS['muted']};")
         root.addWidget(hint)
+
+        profile_row = QHBoxLayout()
+        self.load_profile_button = QPushButton(parent.t("profile_load"))
+        self.load_profile_button.setIcon(parent.icon_for("SP_DialogOpenButton"))
+        self.save_profile_button = QPushButton(parent.t("profile_save"))
+        self.save_profile_button.setIcon(parent.icon_for("SP_DialogSaveButton"))
+        self.load_profile_button.clicked.connect(self._load_profile)
+        self.save_profile_button.clicked.connect(self._save_profile)
+        profile_row.addWidget(self.load_profile_button)
+        profile_row.addWidget(self.save_profile_button)
+        profile_row.addStretch()
+        root.addLayout(profile_row)
 
         filter_row = QHBoxLayout()
         filter_row.addWidget(QLabel(parent.t("queue_filter")))
@@ -2110,6 +2815,8 @@ class BatchQueueDialog(QDialog):
 
         row = QHBoxLayout()
         self.queue_mutation_buttons: list[QPushButton] = []
+        raw_action = QPushButton("Add RAW → Sparse" if parent.language == "en" else "Добавить RAW → Sparse")
+        raw_action.setIcon(parent.icon_for("SP_FileDialogNewFolder")); raw_action.clicked.connect(self._add_raw_sparse_task); row.addWidget(raw_action)
         qfil_actions = [
             (("Add QFIL task…" if parent.language == "en" else "Добавить задание QFIL…"), self._add_qfil_task),
             (("QFIL XML tools" if parent.language == "en" else "Инструменты QFIL XML"), parent._open_qfil),
@@ -2215,6 +2922,146 @@ class BatchQueueDialog(QDialog):
             f"QProgressBar::chunk{{background:{COLORS['cyan']}}}"
         )
 
+    def _collect_profile_tasks(self) -> list[dict[str, Any]]:
+        """Return task definitions in visible queue order; runtime statuses are intentionally omitted."""
+        tasks: list[dict[str, Any]] = []
+        for index in range(self.list.count()):
+            item = self.list.item(index)
+            task_type = str(item.data(self.ROLE_TASK_TYPE) or "sparse")
+            source = str(item.data(self.ROLE_SOURCE) or "")
+            if task_type == "sparse":
+                tasks.append({"type": "sparse", "source": source})
+            elif task_type == "raw_to_sparse":
+                tasks.append({
+                    "type": "raw_to_sparse", "source": source,
+                    "config": dict(item.data(self.ROLE_RAW_CONFIG) or {}),
+                })
+            elif task_type == "qfil":
+                tasks.append({
+                    "type": "qfil", "label": source,
+                    "config": dict(item.data(self.ROLE_QFIL_CONFIG) or {}),
+                })
+            else:
+                raise BatchProfileError(f"Unsupported task in queue: {task_type}")
+        return tasks
+
+    def _apply_profile(self, profile: dict[str, Any]) -> int:
+        """Replace queue contents with already validated profile data. Returns missing input count."""
+        options = profile["options"]
+        self.list.clear()
+        self.folder_edit.setText(options["output_dir"])
+        self.overwrite.setChecked(options["overwrite"])
+        self.verify_output.setChecked(options["verify_output"])
+        missing_inputs = 0
+        for task in profile["tasks"]:
+            task_type = task["type"]
+            task_id = uuid.uuid4().hex
+            item = QListWidgetItem()
+            item.setData(self.ROLE_TASK_ID, task_id)
+            item.setData(self.ROLE_STATUS, "waiting")
+            item.setData(self.ROLE_REQUEST_ORIGINAL_STATUS, None)
+            item.setData(self.ROLE_ERROR, "")
+            item.setData(self.ROLE_TASK_TYPE, task_type)
+            if task_type == "sparse":
+                source = task["source"]
+                item.setData(self.ROLE_SOURCE, source)
+                if not Path(source).is_file():
+                    missing_inputs += 1
+                self.main.add_recent(source)
+            elif task_type == "raw_to_sparse":
+                source = task["source"]
+                item.setData(self.ROLE_SOURCE, source)
+                item.setData(self.ROLE_RAW_CONFIG, dict(task["config"]))
+                if not Path(source).is_file():
+                    missing_inputs += 1
+                self.main.add_recent(source)
+            elif task_type == "qfil":
+                item.setData(self.ROLE_SOURCE, task["label"])
+                item.setData(self.ROLE_QFIL_CONFIG, dict(task["config"]))
+                missing_inputs += sum(1 for value in task["config"]["rawprogram_files"] if not Path(value).is_file())
+                missing_inputs += sum(1 for value in task["config"]["patch_files"] if not Path(value).is_file())
+            else:  # load_batch_profile already validates this; keep the UI boundary defensive.
+                raise BatchProfileError(f"Unsupported task in profile: {task_type}")
+            self.list.addItem(item)
+            self._set_item_status(task_id, "waiting")
+        self.progress.setValue(0)
+        self.progress_label.setText(self.main.t("ready"))
+        self._last_progress_label = self.main.t("ready")
+        self.filter_combo.setCurrentIndex(self.filter_combo.findData("all"))
+        self.main.settings.setValue("queue_output_dir", options["output_dir"])
+        self._refresh_summary()
+        self._update_action_states()
+        return missing_inputs
+
+    def _save_profile(self) -> None:
+        if self._is_running():
+            return
+        default_path = str(Path.home() / "sparse-to-raw-profile.json")
+        selected, _ = QFileDialog.getSaveFileName(
+            self, self.main.t("profile_save"), default_path, "Batch profiles (*.json)"
+        )
+        if not selected:
+            return
+        path = Path(selected)
+        if path.suffix.casefold() != ".json":
+            path = path.with_suffix(".json")
+        overwrite = False
+        if path.exists():
+            answer = QMessageBox.question(
+                self, self.main.t("profile_save"),
+                self.main.t("confirm_profile_overwrite").format(path=path),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            overwrite = True
+        try:
+            save_batch_profile(
+                path, self._collect_profile_tasks(),
+                {
+                    "output_dir": self.folder_edit.text().strip(),
+                    "overwrite": self.overwrite.isChecked(),
+                    "verify_output": self.verify_output.isChecked(),
+                },
+                overwrite=overwrite,
+            )
+            self._log("success", f"{self.main.t('profile_saved')} {path}")
+            QMessageBox.information(self, self.main.t("profile_save"), self.main.t("profile_saved"))
+        except (OSError, BatchProfileError, TypeError, ValueError) as exc:
+            QMessageBox.critical(self, self.main.t("profile_save"), str(exc))
+
+    def _load_profile(self) -> None:
+        if self._is_running():
+            return
+        selected, _ = QFileDialog.getOpenFileName(
+            self, self.main.t("profile_load"), str(Path.home()), "Batch profiles (*.json)"
+        )
+        if not selected:
+            return
+        try:
+            profile = load_batch_profile(selected)
+        except (OSError, BatchProfileError, TypeError, ValueError) as exc:
+            QMessageBox.critical(self, self.main.t("profile_load"), str(exc))
+            return
+        if self.list.count():
+            answer = QMessageBox.question(
+                self, self.main.t("profile_replace_title"), self.main.t("profile_replace_queue"),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        try:
+            missing = self._apply_profile(profile)
+            self._log("success", f"{self.main.t('profile_loaded')} {Path(selected)}")
+            message = self.main.t("profile_loaded")
+            if missing:
+                message += "\n\n" + self.main.t("profile_missing_inputs").format(count=missing)
+            QMessageBox.information(self, self.main.t("profile_load"), message)
+        except (KeyError, OSError, BatchProfileError, TypeError, ValueError) as exc:
+            QMessageBox.critical(self, self.main.t("profile_load"), str(exc))
+
     def _status_label(self, status: str) -> str:
         keys = {
             "waiting": "queue_status_waiting", "running": "queue_status_running",
@@ -2244,7 +3091,7 @@ class BatchQueueDialog(QDialog):
         item.setData(self.ROLE_ERROR, error)
         source = str(item.data(self.ROLE_SOURCE) or "")
         task_type = str(item.data(self.ROLE_TASK_TYPE) or "sparse")
-        prefix = "QFIL" if task_type == "qfil" else "Sparse"
+        prefix = "QFIL" if task_type == "qfil" else ("RAW→Sparse" if task_type == "raw_to_sparse" else "Sparse")
         item.setText(f"{self._status_label(status)}  ·  [{prefix}] {source}")
         item.setForeground(QColor(self.STATUS_COLORS.get(status, COLORS["muted"])))
         item.setToolTip(error or source)
@@ -2376,6 +3223,8 @@ class BatchQueueDialog(QDialog):
             else QAbstractItemView.DragDropMode.InternalMove
         )
         self.folder_edit.setEnabled(not running)
+        self.load_profile_button.setEnabled(not running)
+        self.save_profile_button.setEnabled(not running)
         self.overwrite.setEnabled(not running)
         self.verify_output.setEnabled(not running)
         self.filter_combo.setEnabled(True)
@@ -2424,9 +3273,10 @@ class BatchQueueDialog(QDialog):
             task_id = str(item.data(self.ROLE_TASK_ID))
             status = str(item.data(self.ROLE_STATUS) or "waiting")
             if status == "waiting" and (only_task_ids is None or task_id in only_task_ids):
-                config = item.data(self.ROLE_QFIL_CONFIG) if item.data(self.ROLE_TASK_TYPE) == "qfil" else None
+                task_type = item.data(self.ROLE_TASK_TYPE)
+                config = item.data(self.ROLE_QFIL_CONFIG) if task_type == "qfil" else (item.data(self.ROLE_RAW_CONFIG) if task_type == "raw_to_sparse" else None)
                 source_value = str(item.data(self.ROLE_SOURCE))
-                source_path = Path(config["rawprogram_files"][0]) if config else Path(source_value)
+                source_path = Path(config["rawprogram_files"][0]) if task_type == "qfil" else Path(source_value)
                 selected_rows.append((task_id, source_path, config))
         if not selected_rows:
             QMessageBox.information(self, self.main.t("queue_title"), self.main.t("add_files"))
@@ -2434,7 +3284,8 @@ class BatchQueueDialog(QDialog):
 
         sources = [source for _, source, _ in selected_rows]
         task_ids = [task_id for task_id, _, _ in selected_rows]
-        qfil_configs = {task_id: config for task_id, _, config in selected_rows if config is not None}
+        qfil_configs = {task_id: config for task_id, _, config in selected_rows if config is not None and "rawprogram_files" in config}
+        raw_configs = {task_id: config for task_id, _, config in selected_rows if config is not None and "output" in config}
         output_dir = Path(self.folder_edit.text()).expanduser().resolve()
         try:
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -2442,7 +3293,7 @@ class BatchQueueDialog(QDialog):
             QMessageBox.critical(self, "Error", str(exc))
             return
         try:
-            sparse_sources = [source for task_id, source in zip(task_ids, sources) if task_id not in qfil_configs]
+            sparse_sources = [source for task_id, source in zip(task_ids, sources) if task_id not in qfil_configs and task_id not in raw_configs]
             if sparse_sources:
                 preflight_batch(sparse_sources, output_dir, overwrite=self.overwrite.isChecked())
         except Exception as exc:
@@ -2477,7 +3328,7 @@ class BatchQueueDialog(QDialog):
         worker = BatchWorkerObject(
             sources, output_dir, self.overwrite.isChecked(),
             verify_output=self.verify_output.isChecked(), task_ids=task_ids,
-            qfil_configs=qfil_configs,
+            qfil_configs=qfil_configs, raw_to_sparse_configs=raw_configs,
         )
         self.worker = worker
         worker.log.connect(self._log)
@@ -2541,6 +3392,23 @@ class BatchQueueDialog(QDialog):
                 if item.data(self.ROLE_STATUS) == "waiting":
                     self._set_item_status(str(item.data(self.ROLE_TASK_ID)), "skipped", "Skipped by user")
         self._update_action_states()
+
+    def _add_raw_sparse_task(self) -> None:
+        if self._is_running(): return
+        source, _ = QFileDialog.getOpenFileName(self, self.main.t("raw_sparse_source"), str(Path.home()), "RAW images (*.img *.bin *.raw);;All files (*)")
+        if not source: return
+        output, _ = QFileDialog.getSaveFileName(self, self.main.t("raw_sparse_output"), str(Path(source).with_suffix(".sparse")), "Android Sparse (*.sparse *.img);;All files (*)")
+        if not output: return
+        block, ok = QInputDialog.getInt(self, self.main.t("raw_sparse_title"), self.main.t("raw_sparse_block"), 4096, 4, 1048576, 4)
+        if not ok: return
+        src = Path(source).resolve(); dst = Path(output).resolve()
+        if src == dst: QMessageBox.warning(self, self.main.t("queue_title"), self.main.t("same_path")); return
+        if not src.is_file(): QMessageBox.warning(self, self.main.t("queue_title"), f"Input file not found: {src}"); return
+        if src.stat().st_size == 0 or src.stat().st_size % block: QMessageBox.warning(self, self.main.t("queue_title"), f"RAW size must be non-zero and divisible by {block} bytes."); return
+        task_id = uuid.uuid4().hex; item = QListWidgetItem()
+        item.setData(self.ROLE_SOURCE, str(src)); item.setData(self.ROLE_TASK_ID, task_id); item.setData(self.ROLE_STATUS, "waiting"); item.setData(self.ROLE_TASK_TYPE, "raw_to_sparse")
+        item.setData(self.ROLE_RAW_CONFIG, {"output": str(dst), "block_size": block})
+        self.list.addItem(item); self._set_item_status(task_id, "waiting"); self._refresh_summary(); self._update_action_states()
 
     def _add_files(self) -> None:
         if self._is_running():
@@ -3168,6 +4036,9 @@ class MainWindow(QWidget):
         toolbar_actions_bottom=QHBoxLayout(); toolbar_actions_bottom.setSpacing(7)
         self.toolbar_actions_top=toolbar_actions_top
         self.toolbar_actions_bottom=toolbar_actions_bottom
+        self.validator_button=QPushButton(); self.validator_button.setObjectName("toolbarButton"); self.validator_button.setIcon(self.icon_for("SP_DialogApplyButton")); self.validator_button.setIconSize(QSize(20,20)); self.validator_button.setToolTip(self.t("validator_title")); self.validator_button.clicked.connect(self._open_validator); toolbar_actions_bottom.addWidget(self.validator_button)
+        self.raw_sparse_button=QPushButton(); self.raw_sparse_button.setObjectName("toolbarButton"); self.raw_sparse_button.setIcon(self.icon_for("SP_FileDialogNewFolder")); self.raw_sparse_button.setIconSize(QSize(20,20)); self.raw_sparse_button.clicked.connect(self._open_raw_sparse); toolbar_actions_bottom.addWidget(self.raw_sparse_button)
+        self.compare_button=QPushButton(); self.compare_button.setObjectName("toolbarButton"); self.compare_button.setIcon(self.icon_for("SP_FileDialogContentsView")); self.compare_button.setIconSize(QSize(20,20)); self.compare_button.setToolTip(self.t("compare_title")); self.compare_button.clicked.connect(self._open_compare); toolbar_actions_bottom.addWidget(self.compare_button)
         self.qfil_button=QPushButton("QFIL XML"); self.qfil_button.setObjectName("toolbarButton"); self.qfil_button.setIcon(self.qfil_icon()); self.qfil_button.setIconSize(QSize(20,20)); self.qfil_button.clicked.connect(self._open_qfil); toolbar_actions_top.addWidget(self.qfil_button)
         self.analyze_button=QPushButton(); self.analyze_button.setObjectName("toolbarButton"); self.analyze_button.setIcon(self.icon_for("SP_FileDialogContentsView")); self.analyze_button.setIconSize(QSize(20,20)); self.analyze_button.clicked.connect(self._open_analysis); toolbar_actions_top.addWidget(self.analyze_button)
         self.structure_button=QPushButton(); self.structure_button.setObjectName("toolbarButton"); self.structure_button.setIcon(self.icon_for("SP_FileDialogDetailedView")); self.structure_button.setIconSize(QSize(20,20)); self.structure_button.clicked.connect(self._open_structure); toolbar_actions_top.addWidget(self.structure_button)
@@ -3260,7 +4131,7 @@ class MainWindow(QWidget):
         self.verify_output_check.setToolTip(d["verify_output_tooltip"])
         self.progress_title.setText(d["progress"]); self.stats_title.setText(d["stats"]); self.chunks_label.setText(f"{d['chunks']}\n0 / —"); self.size_label.setText(f"{d['size']}\n0 B / —")
         self.log_title.setText(d["log"]); self.clear_log_button.setText(d["clear_log"])
-        self.analyze_button.setText(d["analyze"]); self.structure_button.setText(d["structure_button"]); self.queue_button.setText(d["queue"]); self.merge_button.setText(d["merge"]); self.report_button.setText(d["save_report"]); self.diagnostics_button.setText(d["diagnostics_button"])
+        self.validator_button.setText(d["validator_button"]); self.validator_button.setToolTip(d["validator_title"]); self.raw_sparse_button.setText(d["raw_sparse"]); self.compare_button.setText(d["compare_button"]); self.compare_button.setToolTip(d["compare_title"]); self.analyze_button.setText(d["analyze"]); self.structure_button.setText(d["structure_button"]); self.queue_button.setText(d["queue"]); self.merge_button.setText(d["merge"]); self.report_button.setText(d["save_report"]); self.diagnostics_button.setText(d["diagnostics_button"])
         self.recent_label.setText(d["recent"]); self.language_label.setText(d["language"])
         self._rebuild_recents()
         current=self.language_combo.findData(self.language)
@@ -3575,7 +4446,7 @@ class MainWindow(QWidget):
     def _set_busy(self,busy:bool) -> None:
         self.source_edit.setEnabled(not busy); self.output_edit.setEnabled(not busy); self.convert_button.setEnabled(not busy)
         self.source_browse_button.setEnabled(not busy); self.output_browse_button.setEnabled(not busy)
-        self.analyze_button.setEnabled(not busy); self.structure_button.setEnabled(not busy); self.queue_button.setEnabled(not busy); self.merge_button.setEnabled(not busy); self.recent_combo.setEnabled(not busy)
+        self.validator_button.setEnabled(not busy); self.compare_button.setEnabled(not busy); self.analyze_button.setEnabled(not busy); self.structure_button.setEnabled(not busy); self.queue_button.setEnabled(not busy); self.merge_button.setEnabled(not busy); self.recent_combo.setEnabled(not busy)
         self.verify_output_check.setEnabled(not busy)
         self.cancel_button.setVisible(busy); self.cancel_button.setEnabled(busy and self._worker is not None)
 
@@ -3692,6 +4563,12 @@ class MainWindow(QWidget):
         dialog.show()
         self._keep_dialog(dialog)
 
+    def _open_raw_sparse(self) -> None:
+        dialog=RawToSparseDialog(self); dialog.show(); self._keep_dialog(dialog)
+    def _open_compare(self) -> None:
+        dialog=ImageComparisonDialog(self); dialog.show(); self._keep_dialog(dialog)
+    def _open_validator(self) -> None:
+        dialog=SparseValidatorDialog(self, self.source_edit.text().strip()); dialog.show(); self._keep_dialog(dialog)
     def _open_qfil(self) -> None:
         dialog=QFILDialog(self); dialog.show(); self._keep_dialog(dialog)
     def _open_analysis(self) -> None:
@@ -3707,7 +4584,12 @@ class MainWindow(QWidget):
         self._dialogs.append(dialog); dialog.finished.connect(lambda _=0,d=dialog:self._dialogs.remove(d) if d in self._dialogs else None)
     def _save_last_report(self) -> None:
         if not self.last_result: return
-        default=f"{Path(str(self.last_result.get('input','image')).split(',')[0]).stem}-report.json"
+        if self.last_result.get("operation") == "logical-image-comparison":
+            left_stem = Path(str(self.last_result.get("left", "left"))).stem
+            right_stem = Path(str(self.last_result.get("right", "right"))).stem
+            default = f"{left_stem}-vs-{right_stem}-comparison.json"
+        else:
+            default=f"{Path(str(self.last_result.get('input','image')).split(',')[0]).stem}-report.json"
         path,_=QFileDialog.getSaveFileName(self,self.t("save_report"),default,"JSON (*.json)")
         if not path: return
         payload={"application":APP_NAME,"version":APP_VERSION,"generated_at":datetime.now().astimezone().isoformat(),"result":self.last_result}

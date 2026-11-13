@@ -4,6 +4,12 @@ The Windows GUI is built with PySide6 and calls the same conversion and validati
 
 ![Main window](../screenshots/main-window-en.png)
 
+## RAW → Sparse
+
+The **RAW → Sparse** toolbar action opens a dedicated Android Sparse v1.0 encoder. Select the RAW input and Sparse destination, set the block size (4096 bytes by default; it must be divisible by 4), and start encoding. The dialog reports percentage and processed blocks, then summarizes chunk count, CRC32, and SHA-256. Cancellation stops the streaming write and removes its temporary file; an existing destination is not replaced until successful completion.
+
+The **Task Queue** window has a separate action for adding RAW → Sparse tasks. Each task stores its destination and block size when added, and can share a sequential queue with regular Sparse → RAW and QFIL jobs. The queue overwrite preference applies to the selected output file.
+
 ## Main conversion window
 
 1. Select an input Sparse image with **Browse**, drag a file onto the drop zone, or choose a recent input.
@@ -17,11 +23,15 @@ If the destination already exists, the GUI asks before replacing it. The output 
 
 The main conversion window, batch queue, and Merge Sparse dialog provide a **Verify RAW after writing** option. The preference is saved between launches and is enabled by default in the current development branch. When enabled, the application re-reads the completed staging RAW file and compares its exact size and SHA-256 with the expected logical contents before publishing it at the destination.
 
-This adds an additional read pass and can noticeably increase disk activity and processing time for large images. If verification fails or the operation is cancelled, the staging file is removed and an existing destination is left unchanged. The result report includes the verification method, hashes, byte count, and duration. This feature is part of v0.5.0 development and is not included in the v0.4.0 release binaries.
+This adds an additional read pass and can noticeably increase disk activity and processing time for large images. If verification fails or the operation is cancelled, the staging file is removed and an existing destination is left unchanged. The result report includes the verification method, hashes, byte count, and duration. This feature was introduced in v0.5.0 and is included in the published v0.5.0 release line and the v0.6.0 release candidate and release line.
 
 ## Language and speed units
 
 Use the language selector to switch between Russian and English. The speed selector supports decimal MB/s, binary MiB/s, and Mbit/s. Preferences, window geometry, last paths, and the recent input list are stored using Qt `QSettings`.
+
+## Logical image comparison
+
+Use **Compare** on the main toolbar to compare any two RAW and/or Android Sparse files by their expanded logical byte contents. Select both inputs and start the comparison. The operation runs in a background worker, reports progress, supports cancellation, and does not create intermediate RAW files. Sparse structure and checksums are validated during the read. The result shows whether the logical data is identical, both SHA-256 hashes, logical sizes, and the first differing byte offset. Use **Save JSON** to export the comparison report.
 
 ## Analyze image
 
@@ -31,7 +41,7 @@ Use the language selector to switch between Russian and English. The speed selec
 
 **Task queue** lets you add multiple input images and process them sequentially into a selected output folder. Drag items to reorder them before starting; the up/down controls are also available. While running, select one or more waiting/running items to cancel or skip them individually. A running task is cancelled at the converter's next safe cancellation point; a pending task is marked immediately. Pause takes effect between files, so the active file is not suspended mid-write. Failed, cancelled, and skipped items can be selected and retried after the run. Use the status filter to focus on waiting, running, successful, failed, cancelled, or skipped items. The progress bar reports overall queue progress and the JSON summary includes per-item states. A failed item does not stop the remaining queue.
 
-For detailed queue controls, pause/cancel behavior, retries, and status filters, see [Advanced task queue](task-queue.md).
+For detailed queue controls, pause/cancel behavior, retries, and status filters, see [Advanced task queue](task-queue.md). JSON batch profiles save and restore queue membership/order, Sparse → RAW / RAW → Sparse / QFIL task definitions, output paths, and shared options. Loading a profile replaces the current queue after confirmation, and restored tasks start in the waiting state.
 
 ## Merge Sparse
 
@@ -60,3 +70,7 @@ The recommended download is `sparse-to-raw-gui-windows.zip`. Extract the entire 
 The GUI sets the bundled `assets/sparse-to-raw.ico` as both the application and main-window icon and assigns a stable Windows AppUserModelID before creating `QApplication`. This allows Windows to show and group the application with its own taskbar icon when launched from the packaged executable. When running from source, the same icon is set on the Qt application/window.
 
 Known operation-log messages are rendered in the currently selected UI language. Event records retain stable source messages and structured categories so the Diagnostic Center can re-render them after switching between Russian and English. The custom dark/cyan/yellow shell is retained; its slanted left contour is painted with antialiased curved paths rather than a pixel-clipping mask.
+
+## Sparse Validator
+
+Select **Validate** on the lower toolbar to open the standalone Sparse Validator. Choose an Android Sparse image and start validation. The dialog shows progress, header and chunk statistics, CRC32 and header-checksum results, any warnings/errors, and the logical SHA-256. You can cancel an active scan or save the validation report as JSON. Validation reads the image in a bounded streaming pass and never creates an intermediate RAW file.

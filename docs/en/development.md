@@ -90,3 +90,17 @@ The GUI supports a `--self-test` entry point used by the release workflow. The w
 - Batch processing is sequential and duplicate output names are rejected.
 - Merge inputs are independent complete Sparse images displayed in the user-selected order.
 - Output is published only after validation; cancellation discards staging output and preserves any existing destination.
+
+## Release-candidate verification
+
+Before tagging a release candidate, run the complete dependency-free suite and GUI smoke tests:
+
+```powershell
+py -m compileall -q .
+py -m unittest discover -s tests -v
+py tests\gui_smoke_tests.py
+```
+
+The GitHub Actions matrix runs the standard-library tests on Windows and Linux with Python 3.10–3.14. The GUI workflow uses PySide6 on Windows and Linux; the Windows release workflow additionally builds the CLI, a folder-based GUI package, and a one-file GUI executable, then self-tests the packaged binaries.
+
+The CLI and GUI import a shared application version from `sparse_to_raw.py`. Update that single constant for each development build.

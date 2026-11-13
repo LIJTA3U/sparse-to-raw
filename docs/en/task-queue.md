@@ -1,4 +1,4 @@
-# Advanced task queue (v0.5.0 development)
+# Advanced task queue (v0.6.0)
 
 The task queue processes Sparse images and QFIL XML packages sequentially. It deliberately runs one job at a time to avoid competing disk-heavy operations.
 
@@ -9,6 +9,9 @@ The task queue processes Sparse images and QFIL XML packages sequentially. It de
 - Reorder waiting tasks by dragging rows or using **Move up / Move down**. The order shown is the processing order.
 - Choose the output directory and overwrite policy.
 - Choose whether to verify each written RAW file.
+- Use **Save profile** to store task definitions/order and the output, overwrite, and verification options in JSON. **Load profile** replaces the current queue after confirmation.
+- Profiles support Sparse → RAW, RAW → Sparse, and QFIL tasks. Runtime statuses (success/failed/cancelled) are not persisted; all restored tasks start in the waiting state.
+- Paths are stored relative to the profile file when possible. A profile can move together with its related file tree; paths on a different Windows drive may remain absolute. The application warns about missing input files after loading.
 - Select a status filter to focus on waiting, running, successful, failed, cancelled, or skipped items.
 
 ## Controls while the queue is running
@@ -28,4 +31,4 @@ The overall progress bar advances by task completion and current-task progress. 
 
 A failed task does not stop later tasks. Preflight failure is different: it blocks the entire selected run before any output is produced.
 
-Mixed Sparse/QFIL queue support is part of v0.6.0 development and is not included in the v0.4.0 release binaries.
+Batch profiles and mixed Sparse/QFIL queue support are included in the v0.6.0 release candidate. These features are not included in older release binaries.

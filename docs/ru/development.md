@@ -90,3 +90,17 @@ py -m PyInstaller --noconfirm --clean --windowed --onefile --name sparse-to-raw-
 - Пакетная обработка последовательная; повторяющиеся имена результатов отклоняются.
 - Для объединения используются независимые Sparse-файлы в порядке, выбранном пользователем.
 - Результат публикуется только после проверки; отмена удаляет временные файлы и сохраняет существующий результат.
+
+## Проверка release candidate
+
+Перед созданием тега кандидата релиза выполните полный набор тестов без сторонних зависимостей и GUI smoke-тесты:
+
+```powershell
+py -m compileall -q .
+py -m unittest discover -s tests -v
+py tests\gui_smoke_tests.py
+```
+
+Матрица GitHub Actions запускает стандартные тесты в Windows и Linux на Python 3.10–3.14. GUI workflow использует PySide6 в Windows и Linux; workflow Windows-релиза дополнительно собирает CLI, GUI-папку и однофайловый GUI EXE, затем запускает self-test собранных приложений.
+
+CLI и GUI используют общую константу версии из `sparse_to_raw.py`. Для каждой dev-сборки обновляйте только её.

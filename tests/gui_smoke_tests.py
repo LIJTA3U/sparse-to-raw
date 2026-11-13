@@ -23,11 +23,15 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from sparse_to_raw import ConversionCancelled, inspect_sparse, read_sparse_chunk_page  # noqa: E402
+from sparse_to_raw import APP_VERSION as CORE_APP_VERSION, ConversionCancelled, inspect_sparse, read_sparse_chunk_page  # noqa: E402
 from diagnostics import DiagnosticStore  # noqa: E402
 
 from sparse_to_raw_gui import (  # noqa: E402
     BatchQueueDialog,
+    ImageComparisonDialog,
+    SparseValidatorDialog,
+    SparseValidatorWorker,
+    RawToSparseDialog,
     DiagnosticCenterDialog,
     BatchWorkerObject,
     ConversionWorkerObject,
@@ -37,6 +41,7 @@ from sparse_to_raw_gui import (  # noqa: E402
     SparseStructureWorker,
     SparseStructureExportWorker,
     APP_USER_MODEL_ID,
+    APP_VERSION,
     localize_log_message,
     format_speed,
     resource_path,
@@ -76,6 +81,9 @@ def write_valid_sparse_image(path: Path) -> None:
 
 
 class SparseToRawGuiTests(unittest.TestCase):
+    def test_gui_and_cli_share_application_version(self) -> None:
+        self.assertEqual(APP_VERSION, CORE_APP_VERSION)
+
     @classmethod
     def setUpClass(cls) -> None:
         cls._diagnostics_temp = tempfile.TemporaryDirectory()
@@ -95,10 +103,52 @@ class SparseToRawGuiTests(unittest.TestCase):
         window = MainWindow()
         try:
             self.assertTrue(hasattr(window, "diagnostics_button"))
+            self.assertTrue(hasattr(window, "validator_button"))
+            self.assertEqual(window.validator_button.text(), window.t("validator_button"))
             self.assertEqual(window.diagnostics_button.text(), window.t("diagnostics_button"))
             self.assertIsInstance(window.diagnostic_store, DiagnosticStore)
         finally:
             window.close()
+
+    def test_image_comparison_dialog_is_available_from_main_window(self) -> None:
+        window = MainWindow()
+        dialog = ImageComparisonDialog(window)
+        try:
+            self.assertTrue(hasattr(window, "compare_button"))
+            self.assertEqual(window.compare_button.text(), window.t("compare_button"))
+            self.assertEqual(dialog.compare_button.text(), window.t("compare_start"))
+            self.assertFalse(dialog.cancel_button.isEnabled())
+            self.assertFalse(dialog.save_button.isEnabled())
+        finally:
+            dialog.close()
+            window.close()
+
+    def test_sparse_validator_dialog_is_available_from_main_window(self) -> None:
+        window = MainWindow()
+        dialog = SparseValidatorDialog(window)
+        try:
+            self.assertEqual(window.validator_button.text(), window.t("validator_button"))
+            self.assertEqual(dialog.validate_button.text(), window.t("validator_start"))
+            self.assertFalse(dialog.cancel_button.isEnabled())
+            self.assertFalse(dialog.save_button.isEnabled())
+        finally:
+            dialog.close()
+            window.close()
+
+    def test_sparse_validator_worker_returns_validation_report(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "valid.sparse"
+            write_valid_sparse_image(source)
+            worker = SparseValidatorWorker(source)
+            results: list[dict] = []
+            failures: list[str] = []
+            worker.succeeded.connect(results.append)
+            worker.failed.connect(failures.append)
+            worker.run()
+            self.assertEqual(failures, [])
+            self.assertEqual(len(results), 1)
+            self.assertTrue(results[0]["valid"])
+            self.assertEqual(results[0]["operation"], "sparse-validation")
 
     def test_main_window_sets_application_icon_and_keeps_smooth_custom_frame(self) -> None:
         window = MainWindow()
@@ -124,11 +174,11 @@ class SparseToRawGuiTests(unittest.TestCase):
             self.app.processEvents()
             self.assertEqual(window.toolbar_layout.count(), 2)
             self.assertEqual(window.toolbar_actions_top.count(), 4)
-            self.assertGreaterEqual(window.toolbar_actions_bottom.count(), 7)
+            self.assertGreaterEqual(window.toolbar_actions_bottom.count(), 8)
             top_buttons = [window.qfil_button, window.analyze_button,
                            window.structure_button, window.queue_button]
-            bottom_buttons = [window.merge_button, window.report_button,
-                              window.diagnostics_button]
+            bottom_buttons = [window.validator_button, window.raw_sparse_button, window.compare_button,
+                              window.merge_button, window.report_button, window.diagnostics_button]
             self.assertTrue(all(button.isVisible() for button in top_buttons + bottom_buttons))
             self.assertLess(max(button.geometry().bottom() for button in top_buttons),
                             min(button.geometry().top() for button in bottom_buttons))
@@ -479,6 +529,49 @@ class SparseToRawGuiTests(unittest.TestCase):
             self.assertEqual(len(results), 1)
             self.assertTrue(results[0]["output_verification"]["passed"])
 
+    def test_raw_to_sparse_worker_encodes_and_reports_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "input.raw"
+            output = root / "output.sparse"
+            source.write_bytes(b"A" * 4096 + b"\0" * 4096)
+            worker = ConversionWorkerObject(source, output, False, operation="raw_to_sparse")
+            worker.block_size = 4096
+            results: list[dict] = []
+            failures: list[str] = []
+            worker.succeeded.connect(results.append)
+            worker.failed.connect(failures.append)
+            worker.run()
+            self.assertEqual(failures, [])
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["input_size_bytes"], 8192)
+            self.assertEqual(results[0]["chunk_counts"]["FILL"], 1)
+            self.assertEqual(results[0]["chunk_counts"]["DONT_CARE"], 1)
+            self.assertEqual(output.read_bytes()[:4], struct.pack("<I", SPARSE_MAGIC))
+
+    def test_batch_worker_supports_raw_to_sparse_task(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "queued.raw"
+            output = root / "queued.sparse"
+            source.write_bytes(b"Z" * 4096)
+            worker = BatchWorkerObject([source], root / "unused", False,
+                task_ids=["raw-task"], raw_to_sparse_configs={"raw-task": {"output": str(output), "block_size": 4096}})
+            reports: list[dict] = []
+            worker.finished_report.connect(reports.append)
+            worker.run()
+            self.assertTrue(output.is_file())
+            self.assertEqual(reports[0]["summary"]["success"], 1)
+            self.assertEqual(reports[0]["items"][0]["task_type"], "raw_to_sparse")
+
+    def test_main_window_exposes_raw_to_sparse_action(self) -> None:
+        window = MainWindow()
+        try:
+            self.assertTrue(hasattr(window, "raw_sparse_button"))
+            self.assertEqual(window.raw_sparse_button.text(), window.t("raw_sparse"))
+        finally:
+            window.close()
+
     def test_recent_file_list_is_most_recent_first_and_bounded(self) -> None:
         window = MainWindow()
         try:
@@ -759,6 +852,59 @@ class SparseToRawGuiTests(unittest.TestCase):
             self.assertFalse(thread.is_alive(), "queue worker did not finish")
             self.assertEqual(reports[0]["summary"]["skipped"], 1)
             self.assertEqual(reports[0]["items"][0]["status"], "skipped")
+
+    def test_batch_queue_exposes_load_and_save_profile_controls(self) -> None:
+        window = MainWindow()
+        dialog = BatchQueueDialog(window)
+        try:
+            self.assertEqual(dialog.load_profile_button.text(), window.t("profile_load"))
+            self.assertEqual(dialog.save_profile_button.text(), window.t("profile_save"))
+            self.assertTrue(dialog.load_profile_button.isEnabled())
+            self.assertTrue(dialog.save_profile_button.isEnabled())
+        finally:
+            dialog.close()
+            window.close()
+
+    def test_batch_profile_replaces_queue_and_restores_mixed_task_order(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            sparse = root / "system.sparse"
+            raw = root / "boot.img"
+            rawprogram = root / "rawprogram0.xml"
+            sparse.write_bytes(b"sparse")
+            raw.write_bytes(b"raw")
+            rawprogram.write_text("<data />", encoding="utf-8")
+            window = MainWindow()
+            dialog = BatchQueueDialog(window)
+            try:
+                profile = {
+                    "options": {"output_dir": str(root / "batch-out"), "overwrite": True, "verify_output": False},
+                    "tasks": [
+                        {"type": "sparse", "source": str(sparse)},
+                        {"type": "raw_to_sparse", "source": str(raw),
+                         "config": {"output": str(root / "boot.sparse"), "block_size": 4096}},
+                        {"type": "qfil", "label": "test package",
+                         "config": {"rawprogram_files": [str(rawprogram)], "patch_files": [],
+                                    "search_dirs": [str(root)], "output_dir": str(root / "qfil-out"),
+                                    "allow_overlaps": False}},
+                    ],
+                }
+                missing = dialog._apply_profile(profile)
+                self.assertEqual(missing, 0)
+                self.assertEqual(dialog.list.count(), 3)
+                self.assertEqual([dialog.list.item(i).data(dialog.ROLE_TASK_TYPE) for i in range(3)],
+                                 ["sparse", "raw_to_sparse", "qfil"])
+                self.assertTrue(dialog.overwrite.isChecked())
+                self.assertFalse(dialog.verify_output.isChecked())
+                self.assertEqual(Path(dialog.folder_edit.text()), root / "batch-out")
+                captured = dialog._collect_profile_tasks()
+                self.assertEqual([task["type"] for task in captured], ["sparse", "raw_to_sparse", "qfil"])
+                self.assertEqual(captured[1]["config"]["block_size"], 4096)
+                self.assertEqual(captured[2]["config"]["rawprogram_files"], [str(rawprogram)])
+                self.assertTrue(all(dialog.list.item(i).data(dialog.ROLE_STATUS) == "waiting" for i in range(3)))
+            finally:
+                dialog.close()
+                window.close()
 
     def test_batch_queue_supports_internal_drag_reordering_and_status_filter(self) -> None:
         window = MainWindow()
