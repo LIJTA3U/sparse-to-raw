@@ -1,8 +1,8 @@
-# v0.6.0 release checklist
+# v0.6.0 release verification checklist
 
-This checklist separates source validation from Windows binary packaging and GitHub publication. Do not mark v0.6.0 stable until every required gate is complete.
+This checklist records the final verification gates for the stable v0.6.0 release and can be reused for maintenance rebuilds.
 
-## 1. Validate the release-candidate source
+## 1. Verify the source version and tests
 
 From the repository root on Windows:
 
@@ -14,44 +14,33 @@ py sparse_to_raw.py --version
 py sparse_to_raw.py --help
 ```
 
-Expected version: `sparse-to-raw v0.6.0-rc1`.
+Expected application version: `sparse-to-raw v0.6.0`.
 
-## 2. Push the candidate and inspect CI
+## 2. Verify CI and release build
 
-Push the reviewed source to `main` and confirm these workflows succeed:
+Confirm successful GitHub Actions runs for:
 
-- `Tests`: Python 3.10–3.14 on Windows and Linux.
-- `GUI smoke tests`: PySide6 GUI tests on Windows and Linux.
+- Core tests on Python 3.10–3.14 for Windows and Linux.
+- GUI smoke tests with PySide6 for Windows and Linux.
+- Windows packaging workflow, including packaged CLI `--version` / `--help` checks and GUI `--self-test` with Python directories removed from `PATH`.
 
-Resolve any failure before creating the candidate release.
+The release workflow must attach `sparse-to-raw.exe`, `sparse-to-raw-gui.exe`, `sparse-to-raw-gui-windows.zip`, and `SHA256SUMS.txt`.
 
-## 3. Build Windows assets through GitHub Actions
+## 3. Test the downloaded Windows assets
 
-Create a GitHub prerelease tagged `v0.6.0-rc1` from the tested commit. Publishing the prerelease triggers `.github/workflows/build-windows-release.yml`.
+- Run the CLI `--version` and `--help` commands.
+- Launch the standalone GUI executable.
+- Extract the GUI ZIP completely and launch the GUI from its extracted application folder. Keep the packaged folder structure intact.
+- Test on a Windows account or machine without Python installed.
+- Verify each downloaded asset against `SHA256SUMS.txt`.
 
-The workflow must produce and attach:
+## 4. Compatibility scope
 
-- `sparse-to-raw.exe` — standalone CLI.
-- `sparse-to-raw-gui.exe` — standalone GUI.
-- `sparse-to-raw-gui-windows.zip` — folder-based GUI package.
+Independent byte-for-byte comparison against `simg2img.exe` was completed on two real Android Sparse images: Blackview factory `super.img` (about 3.6 GB) and Google Pixel factory `userdata_exp.ai.img` (about 6.83 GB). This is a limited sample. Android Dynamic Partitions `super` containers and arbitrary multi-file `super_*` layouts are not covered by that comparison and are not parsed as Dynamic Partitions by this application. See the [4PDA discussion of the ten-file Vivo V70 Elite `super` layout](https://4pda.to/forum/index.php?showtopic=496786&st=5460).
 
-The workflow runs tests and Python compilation, smoke-tests the packaged CLI, and runs the GUI `--self-test` for both GUI packages with Python directories removed from `PATH`.
+## 5. Safety and release hygiene
 
-Download all three assets from the prerelease and test them on a clean Windows account or machine without Python installed. Keep the GUI folder ZIP extracted as a complete folder; do not move the executable away from its bundled libraries.
-
-## 4. Promote to stable v0.6.0
-
-After RC validation:
-
-1. Change `APP_VERSION` in `sparse_to_raw.py` from `v0.6.0-rc1` to `v0.6.0`.
-2. Add a final `v0.6.0` entry at the top of `CHANGELOG.md`, `docs/en/changelog.md`, and `docs/ru/changelog.md`.
-3. Update README and installation links to the stable `v0.6.0` release.
-4. Run the full test and GUI commands again, commit, and push.
-5. Create and push the `v0.6.0` tag from that exact tested commit, then publish the GitHub Release. The Windows workflow builds and attaches the three assets automatically.
-6. Download and smoke-test the published stable assets before announcing the release.
-
-## 5. Release hygiene
-
-- Verify the release ZIP contains source, documentation, assets, tests, and workflows, but no user firmware images, RAW dumps, Sparse images, Python caches, or local build output.
-- Generate SHA-256 checksums for all published assets and include them in the release notes.
-- Keep the safety note: the tool processes files only and does not flash devices; QFIL patch commands are reported, not executed.
+- Keep firmware dumps, `.img`, `.raw`, `.sparse`, `.simg`, and local build/cache files out of source archives.
+- Preserve the warning that the application only processes files and does not flash devices.
+- Preserve the warning that QFIL patch commands are reported but not executed.
+- Before a maintenance release, update `APP_VERSION`, changelog entries, README links, create a tag from the exact tested commit, and verify the newly published artifacts.

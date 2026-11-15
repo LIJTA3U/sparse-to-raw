@@ -1,6 +1,6 @@
 # RAW output verification
 
-Read-back verification was introduced during v0.5.0 development and is included in the v0.5.0 release line and the v0.6.0 release candidate and release line.
+Read-back verification was introduced during v0.5.0 development and is included in the v0.5.0 release line and the v0.6.0 release.
 
 ## What is checked
 

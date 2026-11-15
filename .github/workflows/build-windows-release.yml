@@ -10,12 +10,12 @@ on:
         description: Existing GitHub Release to attach the packages to
         required: true
         type: string
-        default: v0.6.0-rc1
+        default: v0.6.0
       source_ref:
         description: Branch, tag, or commit to build from (main includes the post-release test fixes)
         required: true
         type: string
-        default: main
+        default: v0.6.0
 
 permissions:
   contents: write

@@ -1,3 +1,29 @@
+## v0.6.0 — stable release
+
+The v0.6.0 feature line is now released as a stable version. Windows packages were built by GitHub Actions; the packaged application was confirmed to run on a Windows computer without Python installed.
+
+### Included functionality
+
+- Streaming RAW → Android Sparse v1.0 conversion with configurable block size, `RAW` / `FILL` / `DONT_CARE` chunks, CRC32, optional SHA-256, atomic output, cancellation, and JSON reports.
+- Standalone streaming Sparse Validator for headers, chunk layout and lengths, block accounting, CRC32 checkpoints, optional image checksum, and trailing data — without creating a RAW file.
+- Logical comparison for RAW ↔ RAW, RAW ↔ Sparse, and Sparse ↔ Sparse, including first-difference offset and logical SHA-256 — without an intermediate RAW file.
+- Qualcomm QFIL XML analysis and RAW assembly by physical partition. Patch instructions are reported but are not executed.
+- Mixed sequential Batch Queue and reusable, versioned JSON Batch Profiles for Sparse → RAW, RAW → Sparse, and QFIL.
+- Structured JSON reports for conversions, verification, validation, comparison, QFIL, and batch operations.
+- Bilingual CLI/GUI and automated Windows CLI/GUI packaging with SHA-256 manifest.
+
+### Compatibility scope
+
+Byte-for-byte comparison against `simg2img.exe` was completed on two real Android Sparse images: Blackview factory `super.img` (about 3.6 GB) and Google Pixel factory `userdata_exp.ai.img` (about 6.83 GB). Both comparisons matched. These two images are a limited validation sample, not comprehensive compatibility certification. Dynamic Partitions `super` containers and arbitrary multi-file `super_*` layouts are outside the tested scope. The [4PDA discussion of a ten-file Vivo V70 Elite `super` layout](https://4pda.to/forum/index.php?showtopic=496786&st=5460) illustrates why such containers must be distinguished from standalone Sparse v1 files; that scenario has not been tested with this application.
+
+### Safety notes
+
+- The application operates on files and does not flash devices or communicate with connected phones.
+- QFIL patch commands are parsed and reported but never executed.
+- Verify critical output independently before using it in firmware workflows.
+
+---
+
 ## v0.6.0-rc1 — release candidate
 
 This release candidate consolidates the v0.6.0 feature line and is intended for final cross-platform and Windows-package verification.

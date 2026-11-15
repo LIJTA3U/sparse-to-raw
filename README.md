@@ -9,7 +9,7 @@ A streaming Android Sparse Image v1 inspector and converter that expands Sparse 
 
 **Language:** English · [Русский](README.ru.md)
 
-> **Status: experimental.** The implementation was compared byte-for-byte with `simg2img.exe` using two Android images: `super.img` (approximately 3.6 GB) from Blackview factory firmware and `userdata_exp.ai.img` (approximately 6.83 GB) from Google Pixel factory firmware. No differences were found in either comparison. These results apply to those two files and do not replace independent testing on other images and devices.
+> **Status: stable release v0.6.0.** A byte‑by‑byte comparison with `simg2img.exe` was performed on two real Android images: `super.img` (about 1.6 GB) from the factory Blackview firmware and `userdata_exp.ai.img` (about 6.83 GB) from the factory Google Pixel firmware. No differences were found in either case. Also, on Android 13, `super.img` — an independent user test on Windows 11. The conversion completed without errors, and the extraction of the `system.img` partition was successful. Thus, the operation with real Sparse images of different devices and Android versions has been confirmed, but this does not guarantee operation with all Sparse variants and all firmware. Note: testing individual super.img files does not mean support for all Dynamic Partitions variants and automatic merging of arbitrary sets of `super_*` files.
 
 ## Features
 
@@ -34,8 +34,7 @@ A streaming Android Sparse Image v1 inspector and converter that expands Sparse 
 
 ## Download for Windows
 
-**Latest stable release:** [sparse-to-raw v0.5.0](https://github.com/LIJTA3U/sparse-to-raw/releases/tag/v0.5.0)  
-**v0.6.0 release candidate:** [v0.6.0-rc1](https://github.com/LIJTA3U/sparse-to-raw/releases/tag/v0.6.0-rc1) (Windows executables are built by GitHub Actions after the candidate release is published).
+**Latest stable release:** [sparse-to-raw v0.6.0](https://github.com/LIJTA3U/sparse-to-raw/releases/tag/v0.6.0). Windows applications are built and attached by GitHub Actions.
 
 The release provides:
 
@@ -118,7 +117,7 @@ For Qualcomm manifests, see the [QFIL XML guide](docs/en/qfil-xml.md). For all C
 - [Sparse Structure Viewer](docs/en/sparse-structure-viewer.md)
 - [Development and packaging](docs/en/development.md)
 - [v0.6.0 release checklist](docs/en/release-checklist.md)
-- [v0.6.0 release notes](RELEASE_NOTES_v0.6.0-rc1.md)
+- [v0.6.0 release notes](RELEASE_NOTES_v0.6.0.md)
 - [Changelog](docs/en/changelog.md)
 - [Contributing](docs/CONTRIBUTING.md)
 - [Security policy](docs/SECURITY.md)
@@ -126,9 +125,9 @@ For Qualcomm manifests, see the [QFIL XML guide](docs/en/qfil-xml.md). For all C
 
 The [Russian README](README.ru.md) links to the Russian documentation in `docs/ru/`.
 
-## v0.6.0 release candidate
+## v0.6.0 stable release
 
-The `v0.6.0-rc1` candidate brings the feature set developed in the v0.6.0 line together: RAW → Sparse conversion, logical RAW/Sparse comparison without intermediate RAW files, the standalone Sparse Validator, reusable JSON Batch Profiles, expanded QFIL integration, and structured JSON reports. It also centralizes the CLI/GUI version and adds Windows packaging automation for CLI and GUI builds. See the [English changelog](docs/en/changelog.md) or [русскую историю изменений](docs/ru/changelog.md) for details.
+The stable `v0.6.0` release brings together RAW → Sparse conversion, logical RAW/Sparse comparison without intermediate RAW files, the standalone Sparse Validator, reusable JSON Batch Profiles, expanded QFIL integration, structured JSON reports, and automated Windows CLI/GUI packaging. Windows release artifacts were built by GitHub Actions and the packaged application was confirmed to run on a Windows computer without Python installed. See the [English changelog](docs/en/changelog.md) or [русскую историю изменений](docs/ru/changelog.md) for details.
 
 ## Tests
 
@@ -142,8 +141,9 @@ The core suite covers chunk types, checksums, malformed and truncated data, safe
 
 ## Limitations and safety
 
-- This is an experimental project, not an official AOSP `simg2img` replacement.
-- Independent byte-for-byte comparisons were performed on the two real images named above. Verify outputs independently before using them for critical work.
+- This is the stable v0.6.0 release, not an official AOSP `simg2img` replacement.
+- Independent byte-for-byte comparisons were performed only on the two real images named above; this is not broad device/firmware certification.
+- `--merge-parts` is for standalone, valid Sparse v1 inputs. It is not a Dynamic Partitions (`super`) parser and does not reconstruct arbitrary split `super` containers. See the [4PDA example](https://4pda.to/forum/index.php?showtopic=496786&st=5460) for a different ten-file Vivo V70 Elite `super` layout and why it must not be blindly concatenated or treated as one Sparse image. This particular layout has not been tested with this application. Verify outputs independently before using them for critical work.
 - The utility works with files only. It does not communicate with phones or flash device partitions.
 - Check input/output paths and available disk space before conversion. Merging needs staging space for the combined output and the currently expanded part.
 - The GUI can automatically discover and numerically sort Sparse part groups. The CLI `--merge-parts` option still requires independent Sparse images to be supplied in the correct order.

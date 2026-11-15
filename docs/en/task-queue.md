@@ -31,4 +31,4 @@ The overall progress bar advances by task completion and current-task progress. 
 
 A failed task does not stop later tasks. Preflight failure is different: it blocks the entire selected run before any output is produced.
 
-Batch profiles and mixed Sparse/QFIL queue support are included in the v0.6.0 release candidate. These features are not included in older release binaries.
+Batch profiles and mixed Sparse/QFIL queue support are included in the stable v0.6.0 release. Older release binaries do not include these features.

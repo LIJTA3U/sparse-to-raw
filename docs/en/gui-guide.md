@@ -23,7 +23,7 @@ If the destination already exists, the GUI asks before replacing it. The output 
 
 The main conversion window, batch queue, and Merge Sparse dialog provide a **Verify RAW after writing** option. The preference is saved between launches and is enabled by default in the current development branch. When enabled, the application re-reads the completed staging RAW file and compares its exact size and SHA-256 with the expected logical contents before publishing it at the destination.
 
-This adds an additional read pass and can noticeably increase disk activity and processing time for large images. If verification fails or the operation is cancelled, the staging file is removed and an existing destination is left unchanged. The result report includes the verification method, hashes, byte count, and duration. This feature was introduced in v0.5.0 and is included in the published v0.5.0 release line and the v0.6.0 release candidate and release line.
+This adds an additional read pass and can noticeably increase disk activity and processing time for large images. If verification fails or the operation is cancelled, the staging file is removed and an existing destination is left unchanged. The result report includes the verification method, hashes, byte count, and duration. This feature was introduced in v0.5.0 and is included in the published v0.5.0 release line and the v0.6.0 release.
 
 ## Language and speed units
 
