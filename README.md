@@ -26,9 +26,10 @@ A streaming Android Sparse Image v1 inspector and converter that expands Sparse 
 - Save and reload versioned JSON Batch Profiles for mixed Sparse → RAW, RAW → Sparse, and QFIL queues.
 - Export detailed JSON reports for conversions, output verification, validation, comparison, QFIL operations, and batch runs.
 - Analyze Qualcomm QFIL `rawprogram*.xml` / `patch*.xml`, resolve referenced firmware files, summarize partitions, and assemble one RAW image per physical partition (`qfil-analyze`, `qfil-build`). Patch instructions are reported but not replayed.
+- Inspect Android Dynamic Partitions metadata (`super-info`) and extract selected logical partitions from RAW/Sparse `super.img` (`super-extract`), including LP geometry and metadata SHA-256 checks and backup-metadata fallback.
 - Stream large images without loading the complete input or output into memory.
 - Use only the Python standard library for the CLI.
-- Provide a PySide6 GUI with a dedicated RAW → Sparse dialog and mixed batch-queue support, plus Russian/English language selection, saved preferences, recent files, logical RAW/Sparse comparison, image analysis, sequential batch conversion, visual ordered merging, optional output verification, a searchable Diagnostic Center, and a paged Sparse Structure Viewer with streaming CSV/JSON export.
+- Provide a PySide6 GUI with a dedicated RAW → Sparse dialog and mixed batch-queue support, plus Russian/English language selection, saved preferences, recent files, logical RAW/Sparse comparison, image analysis, sequential batch conversion, visual ordered merging, optional output verification, a searchable Diagnostic Center, and a paged Sparse Structure Viewer with streaming CSV/JSON export, a Super Image dialog for partition inspection/extraction, and JSON reports.
 
 `DONT_CARE` ranges are interpreted as zero bytes. The resulting logical RAW contents and size are correct; the filesystem may store zero ranges as sparse holes.
 
@@ -45,6 +46,8 @@ The release provides:
 End users do not need to install Python to run the packaged Windows applications. The folder ZIP is recommended for normal use; keep the extracted directory structure intact.
 
 ## Windows GUI
+
+The v0.7.0 development branch uses a compact two-row toolbar: primary sections are grouped in the first row, common actions in the second, and less-frequent actions are in the Tools menu. The new Super Image dialog inspects Dynamic Partitions metadata and extracts selected partitions. See the [Super Image guide](docs/en/super-image.md).
 
 The GUI uses a dark theme with an angular yellow frame and cyan accents. It supports drag-and-drop, progress statistics, an operation log, saved settings, recent input files, and speed display in decimal MB/s, binary MiB/s, or Mbit/s.
 
@@ -141,9 +144,9 @@ The core suite covers chunk types, checksums, malformed and truncated data, safe
 
 ## Limitations and safety
 
-- This is the stable v0.6.0 release, not an official AOSP `simg2img` replacement.
+- The stable v0.6.0 release is not an official AOSP `simg2img` replacement; Super Image tools are part of the current v0.7.0-dev development branch.
 - Independent byte-for-byte comparisons were performed only on the two real images named above; this is not broad device/firmware certification.
-- `--merge-parts` is for standalone, valid Sparse v1 inputs. It is not a Dynamic Partitions (`super`) parser and does not reconstruct arbitrary split `super` containers. See the [4PDA example](https://4pda.to/forum/index.php?showtopic=496786&st=5460) for a different ten-file Vivo V70 Elite `super` layout and why it must not be blindly concatenated or treated as one Sparse image. This particular layout has not been tested with this application. Verify outputs independently before using them for critical work.
+- `--merge-parts` is only for independent, valid Sparse v1 files and does not reconstruct arbitrary `super` containers. Separate `super-info` / `super-extract` commands parse supported Dynamic Partitions metadata (LP 10.0–10.2), but currently require extracted extents to reference block device index 0. Multi-image retrofit layouts and arbitrary `super_*` sets are not supported. See the [4PDA example](https://4pda.to/forum/index.php?showtopic=496786&st=5460). Verify outputs independently before using them for critical work.
 - The utility works with files only. It does not communicate with phones or flash device partitions.
 - Check input/output paths and available disk space before conversion. Merging needs staging space for the combined output and the currently expanded part.
 - The GUI can automatically discover and numerically sort Sparse part groups. The CLI `--merge-parts` option still requires independent Sparse images to be supplied in the correct order.

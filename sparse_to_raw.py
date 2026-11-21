@@ -24,7 +24,7 @@ CHUNK_RAW = 0xCAC1
 CHUNK_FILL = 0xCAC2
 CHUNK_DONT_CARE = 0xCAC3
 CHUNK_CRC32 = 0xCAC4
-APP_VERSION = "v0.6.0"
+APP_VERSION = "v0.7.0-dev"
 
 HEADER_FMT = "<IHHHHIIII"
 HEADER_SIZE = struct.calcsize(HEADER_FMT)  # 28 bytes
@@ -1926,6 +1926,9 @@ def main(argv: list[str] | None = None) -> int:
     if arguments and arguments[0] in {"qfil-analyze", "qfil-build"}:
         from qfil_xml import run_qfil_cli
         return run_qfil_cli(arguments[0], arguments[1:])
+    if arguments and arguments[0] in {"super-info", "super-extract"}:
+        from super_image import run_super_cli
+        return run_super_cli(arguments[0], arguments[1:])
     if arguments and arguments[0] == "validate":
         from sparse_validator import validate_sparse
         command = argparse.ArgumentParser(

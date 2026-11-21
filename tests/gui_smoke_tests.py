@@ -31,6 +31,7 @@ from sparse_to_raw_gui import (  # noqa: E402
     ImageComparisonDialog,
     SparseValidatorDialog,
     SparseValidatorWorker,
+    SuperImageDialog,
     RawToSparseDialog,
     DiagnosticCenterDialog,
     BatchWorkerObject,
@@ -135,6 +136,50 @@ class SparseToRawGuiTests(unittest.TestCase):
             dialog.close()
             window.close()
 
+    def test_super_image_dialog_is_available_and_invalidates_stale_metadata(self) -> None:
+        window = MainWindow()
+        dialog = SuperImageDialog(window)
+        try:
+            self.assertFalse(dialog.extract_button.isEnabled())
+            dialog.metadata = {"partitions": [{"name": "system"}]}
+            dialog._expected_signature = {"size_bytes": 123}
+            dialog.extract_button.setEnabled(True)
+            dialog.source_edit.setText("changed-super.img")
+            self.assertIsNone(dialog.metadata)
+            self.assertIsNone(dialog._expected_signature)
+            self.assertFalse(dialog.extract_button.isEnabled())
+            self.assertIn("изменён", dialog.status_label.text().lower())
+        finally:
+            dialog.close()
+            window.close()
+
+    def test_super_image_dialog_preserves_metadata_when_slot_spin_is_clamped(self) -> None:
+        window = MainWindow()
+        dialog = SuperImageDialog(window)
+        try:
+            dialog.slot_spin.setValue(1)
+            result = {
+                "input": "super.img", "source_format": "RAW", "metadata_version": "10.0",
+                "metadata_copy": "primary", "source_signature": {"size_bytes": 1, "mtime_ns": 1, "inode": 1},
+                "geometry": {
+                    "metadata_slot_count": 1, "selected_slot": 0,
+                    "logical_block_size": 4096, "metadata_max_size": 4096,
+                },
+                "partitions": [{
+                    "name": "system", "size_bytes": 4096, "num_extents": 1,
+                    "group": "default", "readonly": False, "updated": False, "disabled": False,
+                }],
+                "groups": [], "block_devices": [],
+            }
+            dialog._on_inspected(result)
+            self.assertIs(dialog.metadata, result)
+            self.assertEqual(dialog.slot_spin.value(), 0)
+            self.assertEqual(dialog.table.rowCount(), 1)
+            self.assertTrue(dialog.extract_button.isEnabled())
+        finally:
+            dialog.close()
+            window.close()
+
     def test_sparse_validator_worker_returns_validation_report(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / "valid.sparse"
@@ -173,13 +218,17 @@ class SparseToRawGuiTests(unittest.TestCase):
             window.show()
             self.app.processEvents()
             self.assertEqual(window.toolbar_layout.count(), 2)
-            self.assertEqual(window.toolbar_actions_top.count(), 4)
-            self.assertGreaterEqual(window.toolbar_actions_bottom.count(), 8)
+            self.assertEqual(window.toolbar_actions_top.count(), 5)
+            self.assertGreaterEqual(window.toolbar_actions_bottom.count(), 7)
             top_buttons = [window.qfil_button, window.analyze_button,
-                           window.structure_button, window.queue_button]
-            bottom_buttons = [window.validator_button, window.raw_sparse_button, window.compare_button,
-                              window.merge_button, window.report_button, window.diagnostics_button]
+                           window.structure_button, window.queue_button, window.super_button]
+            bottom_buttons = [window.validator_button, window.raw_sparse_button,
+                              window.compare_button, window.tools_button]
             self.assertTrue(all(button.isVisible() for button in top_buttons + bottom_buttons))
+            self.assertTrue(all(not button.icon().isNull() for button in top_buttons + bottom_buttons))
+            self.assertEqual(len(window.tools_menu.actions()), 4)
+            self.assertTrue(all(not action.icon().isNull() for action in window.tools_menu.actions() if not action.isSeparator()))
+            self.assertTrue(window.merge_button.isEnabled())
             self.assertLess(max(button.geometry().bottom() for button in top_buttons),
                             min(button.geometry().top() for button in bottom_buttons))
         finally:

@@ -1,3 +1,21 @@
+## [Unreleased] — v0.7.0 development
+
+### Added
+- Android Super Image inspection and extraction for RAW and Android Sparse inputs: LP geometry/metadata checksum validation, primary/backup metadata fallback, slot selection, partition/group/extent listing, and extraction of selected logical partitions.
+- `super-info` and `super-extract` CLI commands with optional JSON reports.
+- Regression fixtures for LP partitions assembled from multiple physically separated extents, covering RAW, Android Sparse, and CLI extraction paths.
+- Dedicated bilingual Super Image GUI dialog with background inspection/extraction, progress, cancellation, and source/slot change invalidation.
+
+### Changed
+- Reorganized the main GUI toolbar into a five-item primary row and a compact secondary row. Less-frequent actions (Sparse merge, report export, and diagnostics) are grouped under an icon-bearing Tools menu.
+- Added icons/tooltips consistently to visible toolbar actions and tightened spacing to prevent clipped labels.
+- Super Image extraction now uses an atomic no-clobber commit when overwrite is not explicitly enabled.
+
+### Limitations
+- LP metadata versions 10.0–10.2 are supported. Extraction currently requires extents to reference block device index 0; multi-image retrofit layouts are not supported.
+
+---
+
 ## v0.6.0 — stable release
 
 The v0.6.0 feature line is now released as a stable version. Windows packages were built by GitHub Actions; the packaged application was confirmed to run on a Windows computer without Python installed.

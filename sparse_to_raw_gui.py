@@ -24,7 +24,7 @@ from typing import Any
 
 from PySide6.QtCore import QObject, QPoint, QPointF, QRectF, QSize, QSettings, QStandardPaths, Qt, QThread, Signal, Slot, qVersion
 from PySide6.QtGui import (
-    QBrush, QColor, QFont, QIcon, QLinearGradient, QPainter, QPainterPath,
+    QAction, QBrush, QColor, QFont, QIcon, QLinearGradient, QPainter, QPainterPath,
     QPen, QTextCharFormat, QTextCursor, QPixmap,
 )
 from PySide6.QtCore import QUrl
@@ -36,13 +36,14 @@ from raw_to_sparse import raw_to_sparse, RawToSparseError
 from image_compare import compare_images, ComparisonCancelled
 from sparse_validator import validate_sparse
 from batch_profiles import BatchProfileError, load_batch_profile, save_batch_profile
+from super_image import inspect_super_image, extract_super_partitions, SuperImageCancelled
 
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMessageBox, QProgressBar, QPushButton, QSizePolicy, QTableWidget,
     QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget, QAbstractItemView,
-    QDialogButtonBox, QFormLayout, QInputDialog, QStyle, QSpinBox,
+    QDialogButtonBox, QFormLayout, QInputDialog, QStyle, QSpinBox, QMenu,
 )
 
 from sparse_to_raw import (
@@ -104,7 +105,30 @@ I18N: dict[str, dict[str, str]] = {
         "stats": "СТАТИСТИКА", "chunks": "Обработано чанков", "size": "Размер результата",
         "status_idle": "ОЖИДАНИЕ", "log": "Журнал операций", "clear_log": "Очистить журнал",
         "analyze": "Анализ образа", "queue": "Очередь задач", "merge": "Объединить Sparse",
-        "save_report": "Сохранить отчёт…", "recent": "Последние файлы", "language": "Язык",
+        "super_button": "Super-образ", "super_title": "Инструменты Android Super Image",
+        "tools_menu": "Инструменты", "recent": "Последние файлы", "recent_short": "Недавние",
+        "save_report": "Сохранить отчёт…", "language": "Язык",
+        "super_source": "Исходный super-образ (RAW или Sparse)", "super_source_pick": "Выберите super.img…",
+        "super_slot": "Слот метаданных", "super_analyze": "Прочитать структуру", "super_select_all": "Выбрать все",
+        "super_select_none": "Снять выбор", "super_output": "Папка для извлечённых разделов",
+        "super_output_pick": "Выберите папку назначения…", "super_browse": "Обзор",
+        "super_extract": "Извлечь выбранные", "super_cancel": "Отменить", "super_close": "Закрыть",
+        "super_ready": "Выберите super.img и прочитайте метаданные.",
+        "super_summary_empty": "Метаданные ещё не загружены.", "super_summary": "Метаданные {version} · слот {slot} · разделов: {count} · групп: {groups} · блочных устройств: {devices}",
+        "super_col_select": "Выбор", "super_col_partition": "Раздел", "super_col_size": "Размер",
+        "super_col_extents": "Фрагменты", "super_col_group": "Группа", "super_col_attrs": "Атрибуты",
+        "super_attr_readonly": "только чтение", "super_attr_updated": "обновлён", "super_attr_disabled": "отключён",
+        "super_extract_done": "Извлечение завершено. Создано образов: {count}",
+        "super_no_selection": "Выберите хотя бы один раздел для извлечения.",
+        "super_confirm_overwrite": "Следующие файлы уже существуют:\n{paths}\n\nЗаменить их после успешного извлечения?",
+        "super_close_running": "Операция выполняется. Отменить и закрыть окно?",
+        "super_extracting": "Извлечение: {name} · {percent}% · {done} / {total}",
+        "super_loaded": "Метаданные прочитаны. Проверьте список разделов и выберите нужные.",
+        "super_not_loaded": "Сначала прочитайте метаданные super.img.",
+        "super_reanalyze": "Источник или слот изменён. Повторно прочитайте метаданные перед извлечением.",
+        "super_preparing": "Подготовка Sparse-образа… {percent}%",
+        "super_output_default": "Извлечённые разделы",
+
         "speed_unit": "Единицы скорости", "status_preparing": "ПОДГОТОВКА",
         "status_success": "УСПЕШНО ЗАВЕРШЕНО", "status_error": "ОШИБКА ПРЕОБРАЗОВАНИЯ",
         "status_cancelled": "ОТМЕНЕНО", "ready": "Ожидание", "done": "Готово",
@@ -293,7 +317,29 @@ I18N: dict[str, dict[str, str]] = {
         "stats": "STATISTICS", "chunks": "Processed chunks", "size": "Output size",
         "status_idle": "IDLE", "log": "Operation log", "clear_log": "Clear log",
         "analyze": "Analyze image", "queue": "Task queue", "merge": "Merge Sparse",
-        "save_report": "Save report…", "recent": "Recent files", "language": "Language",
+        "super_button": "Super Image", "super_title": "Android Super Image Tools",
+        "tools_menu": "Tools", "recent": "Recent files", "recent_short": "Recent",
+        "save_report": "Save report…", "language": "Language",
+        "super_source": "Source super image (RAW or Sparse)", "super_source_pick": "Select super.img…",
+        "super_slot": "Metadata slot", "super_analyze": "Read structure", "super_select_all": "Select all",
+        "super_select_none": "Clear selection", "super_output": "Output folder for extracted partitions",
+        "super_output_pick": "Select output folder…", "super_browse": "Browse",
+        "super_extract": "Extract selected", "super_cancel": "Cancel", "super_close": "Close",
+        "super_ready": "Choose a super.img and read its metadata.",
+        "super_summary_empty": "Metadata has not been loaded.", "super_summary": "Metadata {version} · slot {slot} · partitions: {count} · groups: {groups} · block devices: {devices}",
+        "super_col_select": "Select", "super_col_partition": "Partition", "super_col_size": "Size",
+        "super_col_extents": "Extents", "super_col_group": "Group", "super_col_attrs": "Attributes",
+        "super_attr_readonly": "read-only", "super_attr_updated": "updated", "super_attr_disabled": "disabled",
+        "super_extract_done": "Extraction completed. Images created: {count}",
+        "super_no_selection": "Select at least one partition to extract.",
+        "super_confirm_overwrite": "The following files already exist:\n{paths}\n\nReplace them after successful extraction?",
+        "super_close_running": "An operation is running. Cancel and close the window?",
+        "super_extracting": "Extracting: {name} · {percent}% · {done} / {total}",
+        "super_loaded": "Metadata loaded. Review the partition list and select the required entries.",
+        "super_not_loaded": "Read the super.img metadata first.",
+        "super_reanalyze": "The source or metadata slot changed. Read the metadata again before extraction.",
+        "super_preparing": "Preparing Sparse image… {percent}%",
+        "super_output_default": "extracted_partitions",
         "speed_unit": "Speed units", "status_preparing": "PREPARING",
         "status_success": "COMPLETED SUCCESSFULLY", "status_error": "CONVERSION ERROR",
         "status_cancelled": "CANCELLED", "ready": "Ready", "done": "Done",
@@ -2374,6 +2420,483 @@ class ImageComparisonDialog(QDialog):
         event.accept()
 
 
+class SuperImageWorker(QObject):
+    """Background worker for LP metadata inspection and partition extraction."""
+    progress = Signal(dict)
+    inspected = Signal(dict)
+    extracted = Signal(dict)
+    failed = Signal(str)
+    cancelled = Signal()
+    finished = Signal()
+
+    def __init__(
+        self,
+        operation: str,
+        source: Path,
+        *,
+        slot: int = 0,
+        output_dir: Path | None = None,
+        partitions: list[str] | None = None,
+        force: bool = False,
+        expected_signature: dict[str, int] | None = None,
+        expected_metadata_sha256: str | None = None,
+    ) -> None:
+        super().__init__()
+        self.operation = operation
+        self.source = source
+        self.slot = slot
+        self.output_dir = output_dir
+        self.partitions = partitions or []
+        self.force = force
+        self.expected_signature = expected_signature
+        self.expected_metadata_sha256 = expected_metadata_sha256
+        self._cancel_event = threading.Event()
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            if self.operation == "inspect":
+                result = inspect_super_image(
+                    self.source, slot=self.slot,
+                    progress_callback=self.progress.emit,
+                    cancel_requested=self._cancel_event.is_set,
+                )
+                self.inspected.emit(result)
+            else:
+                if self.output_dir is None:
+                    raise ValueError("An output directory is required for extraction")
+                result = extract_super_partitions(
+                    self.source,
+                    self.output_dir,
+                    self.partitions,
+                    slot=self.slot,
+                    force=self.force,
+                    expected_signature=self.expected_signature,
+                    expected_metadata_sha256=self.expected_metadata_sha256,
+                    progress_callback=self.progress.emit,
+                    cancel_requested=self._cancel_event.is_set,
+                )
+                self.extracted.emit(result)
+        except SuperImageCancelled:
+            self.cancelled.emit()
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+        finally:
+            self.finished.emit()
+
+    def request_cancel(self) -> None:
+        self._cancel_event.set()
+
+
+class SuperImageDialog(QDialog):
+    """Inspect Android dynamic partitions and extract selected partitions."""
+    def __init__(self, parent: "MainWindow", source: str = "") -> None:
+        super().__init__(parent)
+        self.main = parent
+        self.metadata: dict[str, Any] | None = None
+        self.worker: SuperImageWorker | None = None
+        self.thread: QThread | None = None
+        self._close_when_finished = False
+        self._expected_signature: dict[str, int] | None = None
+        self.setWindowTitle(parent.t("super_title"))
+        self.resize(1000, 700)
+        self.setMinimumSize(820, 560)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 14, 16, 14)
+        root.setSpacing(9)
+
+        source_label = QLabel(parent.t("super_source"))
+        source_label.setObjectName("fieldLabel")
+        root.addWidget(source_label)
+        source_row = QHBoxLayout()
+        source_row.setSpacing(7)
+        self.source_edit = QLineEdit(source)
+        self.source_edit.setPlaceholderText(parent.t("super_source_pick"))
+        self.source_edit.textChanged.connect(self._invalidate_metadata)
+        source_row.addWidget(self.source_edit, 1)
+        self.source_browse = QPushButton(parent.t("super_browse"))
+        self.source_browse.setIcon(parent.icon_for("SP_DialogOpenButton"))
+        self.source_browse.clicked.connect(self._browse_source)
+        source_row.addWidget(self.source_browse)
+        root.addLayout(source_row)
+
+        options_row = QHBoxLayout()
+        self.slot_label = QLabel(parent.t("super_slot"))
+        self.slot_spin = QSpinBox()
+        self.slot_spin.setRange(0, 31)
+        self.slot_spin.setValue(0)
+        self.slot_spin.setFixedWidth(78)
+        self.slot_spin.valueChanged.connect(self._invalidate_metadata)
+        self.analyze_button = QPushButton(parent.t("super_analyze"))
+        self.analyze_button.setIcon(parent.icon_for("SP_FileDialogDetailedView"))
+        self.analyze_button.clicked.connect(self._start_inspection)
+        options_row.addWidget(self.slot_label)
+        options_row.addWidget(self.slot_spin)
+        options_row.addStretch(1)
+        options_row.addWidget(self.analyze_button)
+        root.addLayout(options_row)
+
+        self.summary_label = QLabel(parent.t("super_summary_empty"))
+        self.summary_label.setWordWrap(True)
+        self.summary_label.setObjectName("panelHeading")
+        root.addWidget(self.summary_label)
+
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels([
+            parent.t("super_col_select"), parent.t("super_col_partition"),
+            parent.t("super_col_size"), parent.t("super_col_extents"),
+            parent.t("super_col_group"), parent.t("super_col_attrs"),
+        ])
+        self.table.setAlternatingRowColors(True)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeMode.Stretch)
+        root.addWidget(self.table, 1)
+
+        selection_row = QHBoxLayout()
+        self.select_all_button = QPushButton(parent.t("super_select_all"))
+        self.select_none_button = QPushButton(parent.t("super_select_none"))
+        self.select_all_button.clicked.connect(lambda: self._set_all_checked(True))
+        self.select_none_button.clicked.connect(lambda: self._set_all_checked(False))
+        selection_row.addWidget(self.select_all_button)
+        selection_row.addWidget(self.select_none_button)
+        selection_row.addStretch(1)
+        root.addLayout(selection_row)
+
+        output_label = QLabel(parent.t("super_output"))
+        output_label.setObjectName("fieldLabel")
+        root.addWidget(output_label)
+        output_row = QHBoxLayout()
+        self.output_edit = QLineEdit()
+        self.output_edit.setPlaceholderText(parent.t("super_output_pick"))
+        output_row.addWidget(self.output_edit, 1)
+        self.output_browse = QPushButton(parent.t("super_browse"))
+        self.output_browse.setIcon(parent.icon_for("SP_DirOpenIcon"))
+        self.output_browse.clicked.connect(self._browse_output)
+        output_row.addWidget(self.output_browse)
+        root.addLayout(output_row)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        root.addWidget(self.progress)
+        self.status_label = QLabel(parent.t("super_ready"))
+        self.status_label.setWordWrap(True)
+        root.addWidget(self.status_label)
+        self.details = QTextEdit()
+        self.details.setReadOnly(True)
+        self.details.setMaximumHeight(105)
+        self.details.setFont(QFont("Consolas", 9))
+        root.addWidget(self.details)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        self.cancel_button = QPushButton(parent.t("super_cancel"))
+        self.cancel_button.setIcon(parent.icon_for("SP_MediaStop"))
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self._cancel)
+        buttons.addWidget(self.cancel_button)
+        self.extract_button = QPushButton(parent.t("super_extract"))
+        self.extract_button.setIcon(parent.icon_for("SP_DialogSaveButton"))
+        self.extract_button.setEnabled(False)
+        self.extract_button.clicked.connect(self._start_extract)
+        buttons.addWidget(self.extract_button)
+        self.close_button = QPushButton(parent.t("super_close"))
+        self.close_button.clicked.connect(self.close)
+        buttons.addWidget(self.close_button)
+        root.addLayout(buttons)
+
+        self.setStyleSheet(
+            f"QDialog{{background:{COLORS['background']};}} "
+            f"QTableWidget{{background:#07111b;alternate-background-color:#0b1a26;"
+            f"gridline-color:#203946;border:1px solid #29434f;}} "
+            f"QHeaderView::section{{background:#0d1c29;color:{COLORS['cyan']};"
+            f"padding:6px;border:1px solid #203946;font-weight:600;}} "
+            f"QProgressBar{{background:#07111b;border:1px solid #254450;border-radius:3px;height:13px;}} "
+            f"QProgressBar::chunk{{background:{COLORS['cyan']};border-radius:2px;}}"
+        )
+        if source and Path(source).is_file():
+            self._set_default_output(source)
+
+    def _browse_source(self) -> None:
+        filename, _ = QFileDialog.getOpenFileName(
+            self, self.main.t("super_source_pick"), self.source_edit.text() or str(Path.home()),
+            "Android super images (*.img *.bin *.sparse);;All files (*)",
+        )
+        if filename:
+            self.source_edit.setText(filename)
+            self._set_default_output(Path(filename))
+            # Selecting the same path does not emit textChanged, but an explicit
+            # browse action still requires the user to confirm the metadata again.
+            self._invalidate_metadata()
+
+    def _invalidate_metadata(self, *_args) -> None:
+        if self.metadata is None:
+            return
+        self.metadata = None
+        self._expected_signature = None
+        self.table.setRowCount(0)
+        self.summary_label.setText(self.main.t("super_summary_empty"))
+        self.status_label.setText(self.main.t("super_reanalyze"))
+        self.details.clear()
+        self.extract_button.setEnabled(False)
+        self.select_all_button.setEnabled(False)
+        self.select_none_button.setEnabled(False)
+
+    def _set_default_output(self, source: Path) -> None:
+        if not self.output_edit.text().strip():
+            folder_name = source.stem + "_extracted"
+            self.output_edit.setText(str(source.parent / folder_name))
+
+    def _browse_output(self) -> None:
+        folder = QFileDialog.getExistingDirectory(
+            self, self.main.t("super_output_pick"), self.output_edit.text() or str(Path.home())
+        )
+        if folder:
+            self.output_edit.setText(folder)
+
+    def _set_controls_busy(self, busy: bool) -> None:
+        self.source_edit.setEnabled(not busy)
+        self.source_browse.setEnabled(not busy)
+        self.slot_spin.setEnabled(not busy)
+        self.analyze_button.setEnabled(not busy)
+        self.select_all_button.setEnabled(not busy and self.metadata is not None)
+        self.select_none_button.setEnabled(not busy and self.metadata is not None)
+        self.output_edit.setEnabled(not busy)
+        self.output_browse.setEnabled(not busy)
+        self.extract_button.setEnabled(not busy and self.metadata is not None)
+        self.close_button.setEnabled(not busy)
+        self.cancel_button.setEnabled(busy)
+
+    def _start_inspection(self) -> None:
+        if self.thread is not None and self.thread.isRunning():
+            return
+        source = Path(self.source_edit.text().strip()).expanduser().resolve()
+        if not source.is_file():
+            QMessageBox.warning(self, self.windowTitle(), self.main.t("missing_source").format(path=source))
+            return
+        if self.main.operation_running(exclude=self):
+            QMessageBox.information(self, self.windowTitle(), self.main.t("another_operation"))
+            return
+        self.metadata = None
+        self._expected_signature = None
+        self.table.setRowCount(0)
+        self.summary_label.setText(self.main.t("super_summary_empty"))
+        self.details.clear()
+        self.progress.setValue(0)
+        self.status_label.setText(self.main.t("super_ready"))
+        worker = SuperImageWorker("inspect", source, slot=self.slot_spin.value())
+        self._start_worker(worker)
+
+    def _start_extract(self) -> None:
+        if self.metadata is None:
+            QMessageBox.information(self, self.windowTitle(), self.main.t("super_not_loaded"))
+            return
+        selected: list[str] = []
+        for row in range(self.table.rowCount()):
+            checkbox_item = self.table.item(row, 0)
+            if checkbox_item is not None and checkbox_item.checkState() == Qt.CheckState.Checked:
+                selected.append(str(self.table.item(row, 1).data(Qt.ItemDataRole.UserRole)))
+        if not selected:
+            QMessageBox.information(self, self.windowTitle(), self.main.t("super_no_selection"))
+            return
+        source = Path(self.source_edit.text().strip()).expanduser().resolve()
+        output_dir = Path(self.output_edit.text().strip()).expanduser().resolve() if self.output_edit.text().strip() else None
+        if output_dir is None:
+            QMessageBox.warning(self, self.windowTitle(), self.main.t("super_output_pick"))
+            return
+        existing = [output_dir / f"{name}.img" for name in selected if (output_dir / f"{name}.img").exists()]
+        force = False
+        if existing:
+            answer = QMessageBox.question(
+                self, self.windowTitle(),
+                self.main.t("super_confirm_overwrite").format(paths="\n".join(str(p) for p in existing)),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+            force = True
+        worker = SuperImageWorker(
+            "extract", source, slot=self.slot_spin.value(), output_dir=output_dir,
+            partitions=selected, force=force,
+            expected_signature=self._expected_signature,
+            expected_metadata_sha256=str(self.metadata.get("metadata_sha256", "")),
+        )
+        self.progress.setValue(0)
+        self.details.clear()
+        self._start_worker(worker)
+
+    def _start_worker(self, worker: SuperImageWorker) -> None:
+        self.worker = worker
+        worker.progress.connect(self._on_progress)
+        worker.inspected.connect(self._on_inspected)
+        worker.extracted.connect(self._on_extracted)
+        worker.failed.connect(self._on_failure)
+        worker.cancelled.connect(self._on_cancelled)
+        thread = QThread(self)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._on_finished)
+        self.thread = thread
+        self._set_controls_busy(True)
+        thread.start()
+
+    def _on_inspected(self, result: dict[str, Any]) -> None:
+        self.metadata = result
+        self._expected_signature = dict(result.get("source_signature", {}))
+        slot_count = int(result.get("geometry", {}).get("metadata_slot_count", 1))
+        # Clamping an out-of-range previous value emits valueChanged; suppress
+        # that signal so the just-loaded metadata is not invalidated mid-render.
+        self.slot_spin.blockSignals(True)
+        self.slot_spin.setMaximum(max(0, slot_count - 1))
+        self.slot_spin.setValue(int(result.get("geometry", {}).get("selected_slot", 0)))
+        self.slot_spin.blockSignals(False)
+        self.summary_label.setText(self.main.t("super_summary").format(
+            version=result.get("metadata_version", "?"), slot=result.get("geometry", {}).get("selected_slot", 0),
+            count=result.get("partition_count", len(result.get("partitions", []))),
+            groups=result.get("group_count", len(result.get("groups", []))),
+            devices=result.get("block_device_count", len(result.get("block_devices", []))),
+        ))
+        self.table.setRowCount(0)
+        for partition in result.get("partitions", []):
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            check_item = QTableWidgetItem("")
+            check_item.setFlags(
+                Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsUserCheckable
+            )
+            check_item.setCheckState(Qt.CheckState.Checked)
+            self.table.setItem(row, 0, check_item)
+            name_item = QTableWidgetItem(str(partition["name"]))
+            name_item.setData(Qt.ItemDataRole.UserRole, str(partition["name"]))
+            self.table.setItem(row, 1, name_item)
+            self.table.setItem(row, 2, QTableWidgetItem(format_bytes(int(partition["size_bytes"]), self.main.language)))
+            self.table.setItem(row, 3, QTableWidgetItem(str(partition["num_extents"])))
+            self.table.setItem(row, 4, QTableWidgetItem(str(partition["group"])))
+            attrs = []
+            if partition.get("readonly"):
+                attrs.append(self.main.t("super_attr_readonly"))
+            if partition.get("updated"):
+                attrs.append(self.main.t("super_attr_updated"))
+            if partition.get("disabled"):
+                attrs.append(self.main.t("super_attr_disabled"))
+            self.table.setItem(row, 5, QTableWidgetItem(", ".join(attrs) if attrs else "—"))
+        self.status_label.setText(self.main.t("super_loaded"))
+        self.progress.setValue(100)
+        self.details.setPlainText(self._metadata_details(result))
+        self._set_controls_busy(False)
+        self.extract_button.setEnabled(bool(result.get("partitions")))
+        self.main.append_log(
+            "success", f"Super image metadata read: {len(result.get('partitions', []))} partition(s)",
+            category="analysis", details={
+                "input": result.get("input"), "metadata_version": result.get("metadata_version"),
+                "slot": result.get("geometry", {}).get("selected_slot"),
+                "partition_count": len(result.get("partitions", [])),
+            },
+        )
+
+    def _metadata_details(self, result: dict[str, Any]) -> str:
+        geometry = result.get("geometry", {})
+        lines = [
+            f"Input: {result.get('input', '')}",
+            f"Format: {result.get('source_format', 'RAW')}",
+            f"Metadata: {result.get('metadata_version', '?')} ({result.get('metadata_copy', 'primary')} copy)",
+            f"Metadata slots: {geometry.get('metadata_slot_count', '?')} · selected: {geometry.get('selected_slot', '?')}",
+            f"Logical block size: {format_bytes(int(geometry.get('logical_block_size', 0)), self.main.language)}",
+            f"Metadata max size: {format_bytes(int(geometry.get('metadata_max_size', 0)), self.main.language)}",
+            f"Partition groups: {len(result.get('groups', []))}",
+            f"Block devices: {len(result.get('block_devices', []))}",
+        ]
+        if result.get("virtual_ab_device"):
+            lines.append("Virtual A/B device: yes")
+        if result.get("overlays_active"):
+            lines.append("Overlayfs active: yes")
+        return "\n".join(lines)
+
+    def _set_all_checked(self, checked: bool) -> None:
+        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item is not None:
+                item.setCheckState(state)
+
+    def _on_progress(self, data: dict[str, Any]) -> None:
+        percent = int(data.get("percent", 0))
+        self.progress.setValue(max(0, min(100, percent)))
+        done = int(data.get("processed_bytes", 0))
+        total = int(data.get("total_bytes", 0))
+        if data.get("stage") == "preparing":
+            self.status_label.setText(self.main.t("super_preparing").format(percent=percent))
+        else:
+            self.status_label.setText(self.main.t("super_extracting").format(
+                name=data.get("partition", ""), percent=percent,
+                done=format_bytes(done, self.main.language), total=format_bytes(total, self.main.language),
+            ))
+
+    def _on_extracted(self, result: dict[str, Any]) -> None:
+        self.progress.setValue(100)
+        self.status_label.setText(self.main.t("super_extract_done").format(count=result.get("extracted_count", 0)))
+        lines = [
+            f"{item['partition']}: {item['output']} · {format_bytes(int(item['size_bytes']), self.main.language)}"
+            for item in result.get("extracted", [])
+        ]
+        self.details.setPlainText("\n".join(lines))
+        self.main.append_log(
+            "success", f"Super image partitions extracted: {result.get('extracted_count', 0)}",
+            category="analysis", details=result,
+        )
+        QMessageBox.information(self, self.windowTitle(), self.status_label.text())
+
+    def _on_failure(self, message: str) -> None:
+        self.status_label.setText(self.main.t("status_error"))
+        self.details.append(message)
+        self.main.append_log("error", f"Super image operation failed: {message}", category="analysis")
+        QMessageBox.critical(self, self.windowTitle(), message)
+
+    def _on_cancelled(self) -> None:
+        self.status_label.setText(self.main.t("status_cancelled"))
+        self.details.append(self.main.t("status_cancelled"))
+
+    def _on_finished(self) -> None:
+        self.worker = None
+        self.thread = None
+        self._set_controls_busy(False)
+        if self._close_when_finished:
+            self._close_when_finished = False
+            self.close()
+
+    def _cancel(self) -> None:
+        if self.worker is not None:
+            self.worker.request_cancel()
+            self.cancel_button.setEnabled(False)
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        if self.thread is not None and self.thread.isRunning():
+            answer = QMessageBox.question(
+                self, self.windowTitle(), self.main.t("super_close_running"),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                self._close_when_finished = True
+                self._cancel()
+            event.ignore()
+            return
+        event.accept()
+
+
 class SparseValidatorWorker(QObject):
     progress = Signal(dict)
     succeeded = Signal(dict)
@@ -4023,33 +4546,111 @@ class MainWindow(QWidget):
         painter.end()
         return QIcon(pixmap)
 
+    def super_icon(self) -> QIcon:
+        """Draw a small stacked-partition icon for the Super Image tools."""
+        pixmap = QPixmap(32, 32)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        cyan = QColor(COLORS["cyan"])
+        pale = QColor(COLORS["text"])
+        panel = QColor(COLORS["panel_alt"])
+        for y, width in ((5, 22), (12, 25), (19, 22)):
+            rect = QRectF((32 - width) / 2, y, width, 6)
+            painter.setPen(QPen(cyan, 1.5))
+            painter.setBrush(QBrush(panel))
+            painter.drawRoundedRect(rect, 1.5, 1.5)
+            painter.setPen(QPen(pale, 1.0))
+            painter.drawLine(int(rect.left() + 4), int(y + 3), int(rect.right() - 4), int(y + 3))
+        painter.setPen(QPen(QColor(COLORS["yellow"]), 2.0, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+        painter.drawLine(16, 25, 16, 29)
+        painter.end()
+        return QIcon(pixmap)
+
     def _build_ui(self) -> None:
         outer=QVBoxLayout(self); outer.setContentsMargins(78,12,78,34); outer.setSpacing(8)
         self.header=HeaderBar(APP_VERSION,self); outer.addWidget(self.header)
         separator=QFrame(); separator.setObjectName("cyanSeparator"); separator.setFixedHeight(2); outer.addWidget(separator)
-        # Split the toolbar into two deliberate rows.  This prevents long
-        # translated labels from colliding with the recent-files/language
-        # controls on common 1120-1366 px desktop widths.
-        toolbar=QVBoxLayout(); toolbar.setSpacing(6)
+        # The primary row contains the five main work areas. Secondary actions
+        # are grouped into a compact Tools menu so translated labels never get
+        # squeezed into unreadable fragments on 1120 px windows.
+        toolbar=QVBoxLayout(); toolbar.setSpacing(5)
         self.toolbar_layout=toolbar
-        toolbar_actions_top=QHBoxLayout(); toolbar_actions_top.setSpacing(7)
-        toolbar_actions_bottom=QHBoxLayout(); toolbar_actions_bottom.setSpacing(7)
+        toolbar_actions_top=QHBoxLayout(); toolbar_actions_top.setSpacing(6)
+        toolbar_actions_bottom=QHBoxLayout(); toolbar_actions_bottom.setSpacing(6)
         self.toolbar_actions_top=toolbar_actions_top
         self.toolbar_actions_bottom=toolbar_actions_bottom
-        self.validator_button=QPushButton(); self.validator_button.setObjectName("toolbarButton"); self.validator_button.setIcon(self.icon_for("SP_DialogApplyButton")); self.validator_button.setIconSize(QSize(20,20)); self.validator_button.setToolTip(self.t("validator_title")); self.validator_button.clicked.connect(self._open_validator); toolbar_actions_bottom.addWidget(self.validator_button)
-        self.raw_sparse_button=QPushButton(); self.raw_sparse_button.setObjectName("toolbarButton"); self.raw_sparse_button.setIcon(self.icon_for("SP_FileDialogNewFolder")); self.raw_sparse_button.setIconSize(QSize(20,20)); self.raw_sparse_button.clicked.connect(self._open_raw_sparse); toolbar_actions_bottom.addWidget(self.raw_sparse_button)
-        self.compare_button=QPushButton(); self.compare_button.setObjectName("toolbarButton"); self.compare_button.setIcon(self.icon_for("SP_FileDialogContentsView")); self.compare_button.setIconSize(QSize(20,20)); self.compare_button.setToolTip(self.t("compare_title")); self.compare_button.clicked.connect(self._open_compare); toolbar_actions_bottom.addWidget(self.compare_button)
-        self.qfil_button=QPushButton("QFIL XML"); self.qfil_button.setObjectName("toolbarButton"); self.qfil_button.setIcon(self.qfil_icon()); self.qfil_button.setIconSize(QSize(20,20)); self.qfil_button.clicked.connect(self._open_qfil); toolbar_actions_top.addWidget(self.qfil_button)
-        self.analyze_button=QPushButton(); self.analyze_button.setObjectName("toolbarButton"); self.analyze_button.setIcon(self.icon_for("SP_FileDialogContentsView")); self.analyze_button.setIconSize(QSize(20,20)); self.analyze_button.clicked.connect(self._open_analysis); toolbar_actions_top.addWidget(self.analyze_button)
-        self.structure_button=QPushButton(); self.structure_button.setObjectName("toolbarButton"); self.structure_button.setIcon(self.icon_for("SP_FileDialogDetailedView")); self.structure_button.setIconSize(QSize(20,20)); self.structure_button.clicked.connect(self._open_structure); toolbar_actions_top.addWidget(self.structure_button)
-        self.queue_button=QPushButton(); self.queue_button.setObjectName("toolbarButton"); self.queue_button.setIcon(self.icon_for("SP_FileDialogListView")); self.queue_button.setIconSize(QSize(20,20)); self.queue_button.clicked.connect(self._open_queue); toolbar_actions_top.addWidget(self.queue_button)
-        self.merge_button=QPushButton(); self.merge_button.setObjectName("toolbarButton"); self.merge_button.setIcon(self.icon_for("SP_DirLinkIcon")); self.merge_button.setIconSize(QSize(20,20)); self.merge_button.clicked.connect(self._open_merge); toolbar_actions_bottom.addWidget(self.merge_button)
-        self.report_button=QPushButton(); self.report_button.setObjectName("toolbarButton"); self.report_button.setIcon(self.icon_for("SP_DialogSaveButton")); self.report_button.setIconSize(QSize(20,20)); self.report_button.clicked.connect(self._save_last_report); self.report_button.setEnabled(False); toolbar_actions_bottom.addWidget(self.report_button)
-        self.diagnostics_button=QPushButton(); self.diagnostics_button.setObjectName("toolbarButton"); self.diagnostics_button.setIcon(self.icon_for("SP_MessageBoxInformation")); self.diagnostics_button.setIconSize(QSize(20,20)); self.diagnostics_button.clicked.connect(self._open_diagnostics); toolbar_actions_bottom.addWidget(self.diagnostics_button)
-        toolbar_actions_bottom.addSpacing(5); self.recent_label=QLabel(); toolbar_actions_bottom.addWidget(self.recent_label)
-        self.recent_combo=QComboBox(); self.recent_combo.setMinimumWidth(110); self.recent_combo.setMaximumWidth(300); self.recent_combo.currentIndexChanged.connect(self._recent_selected); toolbar_actions_bottom.addWidget(self.recent_combo,1)
-        self.language_label=QLabel(); toolbar_actions_bottom.addWidget(self.language_label)
-        self.language_combo=QComboBox(); self.language_combo.addItem("Русский","ru"); self.language_combo.addItem("English","en"); self.language_combo.setMinimumWidth(105); self.language_combo.setMaximumWidth(125); self.language_combo.currentIndexChanged.connect(self._language_changed); toolbar_actions_bottom.addWidget(self.language_combo)
+
+        def primary_button(text: str, icon: QIcon, callback, tooltip: str = "") -> QPushButton:
+            button = QPushButton(text)
+            button.setObjectName("toolbarPrimary")
+            button.setIcon(icon)
+            button.setIconSize(QSize(18, 18))
+            button.setMinimumHeight(34)
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            if tooltip:
+                button.setToolTip(tooltip)
+            button.clicked.connect(callback)
+            toolbar_actions_top.addWidget(button, 1)
+            return button
+
+        def compact_button(text: str, icon: QIcon, callback, tooltip: str = "") -> QPushButton:
+            button = QPushButton(text)
+            button.setObjectName("toolbarButton")
+            button.setIcon(icon)
+            button.setIconSize(QSize(17, 17))
+            button.setFixedHeight(31)
+            button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            if tooltip:
+                button.setToolTip(tooltip)
+            button.clicked.connect(callback)
+            toolbar_actions_bottom.addWidget(button)
+            return button
+
+        self.qfil_button=primary_button("QFIL XML",self.qfil_icon(),self._open_qfil)
+        self.analyze_button=primary_button(self.t("analyze"),self.icon_for("SP_FileDialogContentsView"),self._open_analysis)
+        self.structure_button=primary_button(self.t("structure_button"),self.icon_for("SP_FileDialogDetailedView"),self._open_structure)
+        self.queue_button=primary_button(self.t("queue"),self.icon_for("SP_FileDialogListView"),self._open_queue)
+        self.super_button=primary_button(self.t("super_button"),self.super_icon(),self._open_super,
+                                         self.t("super_title"))
+
+        self.validator_button=compact_button(self.t("validator_button"),self.icon_for("SP_DialogApplyButton"),self._open_validator,self.t("validator_title"))
+        self.raw_sparse_button=compact_button(self.t("raw_sparse"),self.icon_for("SP_FileDialogNewFolder"),self._open_raw_sparse,self.t("raw_sparse_title"))
+        self.compare_button=compact_button(self.t("compare_button"),self.icon_for("SP_FileDialogContentsView"),self._open_compare,self.t("compare_title"))
+
+        self.tools_menu=QMenu(self)
+        self.merge_button=QAction(self.icon_for("SP_DirLinkIcon"),self.t("merge"),self)
+        self.merge_button.triggered.connect(self._open_merge)
+        self.report_button=QAction(self.icon_for("SP_DialogSaveButton"),self.t("save_report"),self)
+        self.report_button.triggered.connect(self._save_last_report)
+        self.report_button.setEnabled(False)
+        self.diagnostics_button=QAction(self.icon_for("SP_MessageBoxInformation"),self.t("diagnostics_button"),self)
+        self.diagnostics_button.triggered.connect(self._open_diagnostics)
+        self.tools_menu.addAction(self.merge_button)
+        self.tools_menu.addAction(self.report_button)
+        self.tools_menu.addSeparator()
+        self.tools_menu.addAction(self.diagnostics_button)
+        self.tools_button=QPushButton(self.t("tools_menu"))
+        self.tools_button.setObjectName("toolbarButton")
+        self.tools_button.setIcon(self.icon_for("SP_ComputerIcon"))
+        self.tools_button.setIconSize(QSize(17,17))
+        self.tools_button.setMenu(self.tools_menu)
+        self.tools_button.setFixedHeight(31)
+        self.tools_button.setSizePolicy(QSizePolicy.Policy.Fixed,QSizePolicy.Policy.Fixed)
+        toolbar_actions_bottom.addWidget(self.tools_button)
+
+        self.recent_label=QLabel(); self.recent_label.setObjectName("toolbarLabel")
+        toolbar_actions_bottom.addSpacing(3); toolbar_actions_bottom.addWidget(self.recent_label)
+        self.recent_combo=QComboBox(); self.recent_combo.setIconSize(QSize(15,15)); self.recent_combo.setMinimumWidth(105); self.recent_combo.setMaximumWidth(195)
+        self.recent_combo.setSizePolicy(QSizePolicy.Policy.Expanding,QSizePolicy.Policy.Fixed)
+        self.recent_combo.currentIndexChanged.connect(self._recent_selected)
+        toolbar_actions_bottom.addWidget(self.recent_combo,1)
+        self.language_label=QLabel(); self.language_label.setObjectName("toolbarLabel")
+        toolbar_actions_bottom.addWidget(self.language_label)
+        self.language_combo=QComboBox(); self.language_combo.addItem("Русский","ru"); self.language_combo.addItem("English","en")
+        self.language_combo.setMinimumWidth(94); self.language_combo.setMaximumWidth(112)
+        self.language_combo.currentIndexChanged.connect(self._language_changed)
+        toolbar_actions_bottom.addWidget(self.language_combo)
         toolbar.addLayout(toolbar_actions_top)
         toolbar.addLayout(toolbar_actions_bottom)
         outer.addLayout(toolbar)
@@ -4111,7 +4712,9 @@ class MainWindow(QWidget):
             QLabel#statValue {{ color:#d5e2e8; background:transparent; line-height:1.2; }} QLabel#statusIdle {{ color:{COLORS['muted']}; font-family:Consolas; font-size:9pt; }}
             QFrame#panelSeparator {{ background:#203946; border:none; }}
             QPushButton {{ background:#0a1b27; color:{COLORS['cyan']}; border:1px solid #24505e; border-radius:4px; padding:6px 10px; }}
-            QPushButton#toolbarButton {{ padding:5px 8px; min-height:27px; }}
+            QPushButton#toolbarButton {{ padding:3px 7px; min-height:25px; }}
+            QPushButton#toolbarPrimary {{ padding:5px 8px; min-height:30px; font-weight:600; }}
+            QLabel#toolbarLabel {{ color:{COLORS['muted']}; font-size:9pt; background:transparent; }}
             QPushButton:hover {{ background:#102e3e; border-color:{COLORS['cyan']}; }} QPushButton:pressed {{ background:#164456; }}
             QPushButton:disabled {{ color:#526570; background:#0b1219; border-color:#1c2c35; }}
             QPushButton#browseButton,QPushButton#clearButton {{ background:#0a1b27; color:{COLORS['cyan']}; border:1px solid #24505e; border-radius:4px; padding:6px 10px; }}
@@ -4131,8 +4734,15 @@ class MainWindow(QWidget):
         self.verify_output_check.setToolTip(d["verify_output_tooltip"])
         self.progress_title.setText(d["progress"]); self.stats_title.setText(d["stats"]); self.chunks_label.setText(f"{d['chunks']}\n0 / —"); self.size_label.setText(f"{d['size']}\n0 B / —")
         self.log_title.setText(d["log"]); self.clear_log_button.setText(d["clear_log"])
-        self.validator_button.setText(d["validator_button"]); self.validator_button.setToolTip(d["validator_title"]); self.raw_sparse_button.setText(d["raw_sparse"]); self.compare_button.setText(d["compare_button"]); self.compare_button.setToolTip(d["compare_title"]); self.analyze_button.setText(d["analyze"]); self.structure_button.setText(d["structure_button"]); self.queue_button.setText(d["queue"]); self.merge_button.setText(d["merge"]); self.report_button.setText(d["save_report"]); self.diagnostics_button.setText(d["diagnostics_button"])
-        self.recent_label.setText(d["recent"]); self.language_label.setText(d["language"])
+        self.validator_button.setText(d["validator_button"]); self.validator_button.setToolTip(d["validator_title"])
+        self.raw_sparse_button.setText(d["raw_sparse"]); self.raw_sparse_button.setToolTip(d["raw_sparse_title"])
+        self.compare_button.setText(d["compare_button"]); self.compare_button.setToolTip(d["compare_title"])
+        self.analyze_button.setText(d["analyze"]); self.structure_button.setText(d["structure_button"])
+        self.queue_button.setText(d["queue"]); self.super_button.setText(d["super_button"])
+        self.super_button.setToolTip(d["super_title"]); self.tools_button.setText(d["tools_menu"])
+        self.merge_button.setText(d["merge"]); self.report_button.setText(d["save_report"])
+        self.diagnostics_button.setText(d["diagnostics_button"])
+        self.recent_label.setText(d["recent_short"]); self.language_label.setText(d["language"])
         self._rebuild_recents()
         current=self.language_combo.findData(self.language)
         if current >= 0 and self.language_combo.currentIndex()!=current:
@@ -4189,7 +4799,8 @@ class MainWindow(QWidget):
         if not self.recent_files: self.recent_combo.addItem(I18N[self.language]["recent_empty"],"")
         else:
             for path in self.recent_files:
-                self.recent_combo.addItem(path,path); self.recent_combo.setItemData(self.recent_combo.count()-1,path,Qt.ItemDataRole.ToolTipRole)
+                self.recent_combo.addItem(self.icon_for("SP_FileIcon"), path, path)
+                self.recent_combo.setItemData(self.recent_combo.count()-1,path,Qt.ItemDataRole.ToolTipRole)
         self.recent_combo.setCurrentIndex(-1); self.recent_combo.blockSignals(False)
     def _recent_selected(self,index:int) -> None:
         if index<0: return
@@ -4446,7 +5057,13 @@ class MainWindow(QWidget):
     def _set_busy(self,busy:bool) -> None:
         self.source_edit.setEnabled(not busy); self.output_edit.setEnabled(not busy); self.convert_button.setEnabled(not busy)
         self.source_browse_button.setEnabled(not busy); self.output_browse_button.setEnabled(not busy)
-        self.validator_button.setEnabled(not busy); self.compare_button.setEnabled(not busy); self.analyze_button.setEnabled(not busy); self.structure_button.setEnabled(not busy); self.queue_button.setEnabled(not busy); self.merge_button.setEnabled(not busy); self.recent_combo.setEnabled(not busy)
+        self.validator_button.setEnabled(not busy); self.compare_button.setEnabled(not busy)
+        self.raw_sparse_button.setEnabled(not busy); self.analyze_button.setEnabled(not busy)
+        self.structure_button.setEnabled(not busy); self.queue_button.setEnabled(not busy)
+        self.super_button.setEnabled(not busy); self.tools_button.setEnabled(not busy)
+        self.merge_button.setEnabled(not busy); self.diagnostics_button.setEnabled(not busy)
+        self.report_button.setEnabled(not busy and self.last_result is not None)
+        self.recent_combo.setEnabled(not busy); self.language_combo.setEnabled(not busy)
         self.verify_output_check.setEnabled(not busy)
         self.cancel_button.setVisible(busy); self.cancel_button.setEnabled(busy and self._worker is not None)
 
@@ -4575,6 +5192,11 @@ class MainWindow(QWidget):
         dialog=AnalysisDialog(self,self.source_edit.text().strip()); dialog.show(); self._keep_dialog(dialog)
     def _open_structure(self) -> None:
         dialog=SparseStructureDialog(self,self.source_edit.text().strip()); dialog.show(); self._keep_dialog(dialog)
+    def _open_super(self) -> None:
+        source = self.source_edit.text().strip()
+        dialog = SuperImageDialog(self, source if source and Path(source).is_file() else "")
+        dialog.show()
+        self._keep_dialog(dialog)
     def _open_queue(self) -> None:
         dialog=BatchQueueDialog(self); dialog.show(); self._keep_dialog(dialog)
     def _open_merge(self) -> None:

@@ -148,7 +148,23 @@ This release candidate consolidates the v0.6.0 feature line and is intended for 
 
 This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased] — v0.6.0 development
+## [Unreleased] — v0.7.0 development
+
+### Added
+- Android Super Image tools: LP geometry/metadata parsing, SHA-256 validation, backup-metadata fallback, partition/group/extent listing, and selected logical partition extraction from RAW and Android Sparse inputs.
+- `super-info` and `super-extract` CLI commands with JSON reports.
+- Dedicated Super Image GUI dialog with background inspection/extraction, progress, cancellation, and stale-metadata invalidation when the source or slot changes.
+
+### Changed
+- Reworked the main GUI toolbar: five primary sections stay in the first row, common actions use a compact second row, and Sparse merging, report export, and diagnostics are grouped under the Tools menu.
+- Standardized toolbar icons, tooltips, and button sizing; tightened spacing to prevent clipped labels.
+- Super Image extraction uses an atomic no-clobber publication unless `--force` is explicitly enabled.
+
+### Limitations
+- LP metadata versions 10.0–10.2 are supported. Extraction requires extents to reference block device index 0; multi-image retrofit layouts are not supported yet.
+
+
+## v0.6.0-dev2 — историческая запись разработки
 
 ### Changed
 - Bumped the development build to `v0.6.0-dev2` after adding bilingual CLI localization.

@@ -171,3 +171,25 @@ py sparse_to_raw.py validate input.sparse --no-sha256 --quiet
 ```
 
 Коды завершения: `0` — образ корректен, `1` — проверка образа не пройдена, `2` — ошибка выполнения или файловой системы. Существующий JSON-отчёт не перезаписывается без `--force`. По умолчанию валидатор проверяет весь поток и вычисляет SHA-256 логического содержимого; `--no-sha256` отключает только вычисление SHA-256. Промежуточный RAW-файл не создаётся.
+
+## Android Super Image: просмотр метаданных и извлечение
+
+Просмотреть разделы, группы и extents без создания выходных файлов:
+
+```powershell
+py sparse_to_raw.py super-info super.img --slot 0 --json-report super-info.json
+```
+
+Извлечь все логические разделы в выбранную папку:
+
+```powershell
+py sparse_to_raw.py super-extract super.img --output-dir extracted
+```
+
+Извлечь только указанные разделы:
+
+```powershell
+py sparse_to_raw.py super-extract super.img --output-dir extracted --partition system --partition vendor
+```
+
+`--partition` можно повторять. По умолчанию извлекаются все разделы. `--slot` по умолчанию равен `0`. Для RAW и Android Sparse входов используется один интерфейс; Sparse временно раскрывается в RAW. `--force` разрешает замену выходных файлов и JSON-отчёта. Текущая реализация поддерживает LP metadata 10.0–10.2 и извлечение extents только с block device index 0.

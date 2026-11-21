@@ -10,6 +10,10 @@ The **RAW → Sparse** toolbar action opens a dedicated Android Sparse v1.0 enco
 
 The **Task Queue** window has a separate action for adding RAW → Sparse tasks. Each task stores its destination and block size when added, and can share a sequential queue with regular Sparse → RAW and QFIL jobs. The queue overwrite preference applies to the selected output file.
 
+## Toolbar layout
+
+The toolbar uses two compact rows. The first row contains the main sections: QFIL XML, Analyze image, Sparse structure, Task queue, and Super Image. The second row keeps the frequent validation, RAW → Sparse, and comparison actions visible. Less-frequent commands—Merge Sparse, Save report, and Diagnostics—are grouped in the **Tools** menu. Hover over a button or menu item for its tooltip; recent files and language selection remain on the right.
+
 ## Main conversion window
 
 1. Select an input Sparse image with **Browse**, drag a file onto the drop zone, or choose a recent input.
@@ -74,3 +78,7 @@ Known operation-log messages are rendered in the currently selected UI language.
 ## Sparse Validator
 
 Select **Validate** on the lower toolbar to open the standalone Sparse Validator. Choose an Android Sparse image and start validation. The dialog shows progress, header and chunk statistics, CRC32 and header-checksum results, any warnings/errors, and the logical SHA-256. You can cancel an active scan or save the validation report as JSON. Validation reads the image in a bounded streaming pass and never creates an intermediate RAW file.
+
+## Android Super Image tools
+
+Open **Super Image** from the first toolbar row. The dialog reads LP geometry and metadata, then lists logical partitions, sizes, groups, extents, and attributes. The source may be RAW or Android Sparse; Sparse is expanded into temporary RAW without modifying the original. Select a metadata slot, click **Read structure**, choose the partitions to extract, and select an output folder. Extraction runs in a worker thread and supports progress and cancellation. Changing the input path or slot invalidates the loaded table and requires a new inspection. LP metadata 10.0–10.2 is supported; multi-image retrofit layouts that use block-device indices other than 0 are not yet supported. See the [Super Image guide](super-image.md).
