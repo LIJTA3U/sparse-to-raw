@@ -25,7 +25,7 @@ A streaming Android Sparse Image v1 inspector and converter that expands Sparse 
 - Compare RAW and/or Android Sparse images by logical contents without creating intermediate RAW files (`compare`); report the first differing byte and both logical SHA-256 hashes.
 - Save and reload versioned JSON Batch Profiles for mixed Sparse → RAW, RAW → Sparse, and QFIL queues.
 - Export detailed JSON reports for conversions, output verification, validation, comparison, QFIL operations, and batch runs.
-- Analyze Qualcomm QFIL `rawprogram*.xml` / `patch*.xml`, resolve referenced firmware files, summarize partitions, and assemble one RAW image per physical partition (`qfil-analyze`, `qfil-build`). Patch instructions are reported but not replayed.
+- Analyze Qualcomm QFIL `rawprogram*.xml` / `patch*.xml`, resolve referenced firmware files, and assemble one RAW image per physical partition (`qfil-analyze`, `qfil-validate`, `qfil-build`). Full preflight validates RAW ranges and Sparse CRCs without creating outputs; patch instructions are reported but not replayed.
 - Inspect Android Dynamic Partitions metadata (`super-info`) and extract selected logical partitions from RAW/Sparse `super.img` (`super-extract`), including LP geometry and metadata SHA-256 checks and backup-metadata fallback.
 - Stream large images without loading the complete input or output into memory.
 - Use only the Python standard library for the CLI.
@@ -140,7 +140,7 @@ Run the complete test suite from the repository root:
 python -m unittest discover -s tests -v
 ```
 
-The core suite covers chunk types, checksums, malformed and truncated data, safe output handling, info/verification modes, merging, SHA-256, JSON reports, progress callbacks, and cancellation. GUI smoke tests cover path validation, widgets, language and speed settings, recent files, worker integration, analysis, batch conversion, and the packaged self-test entry point. GitHub Actions runs core tests on Python 3.10–3.14 on Windows and Linux; GUI smoke tests run on Windows and Linux with PySide6.
+The core suite covers chunk types, checksums, malformed and truncated data, safe output handling, info/verification modes, merging, SHA-256, JSON reports, progress callbacks, and cancellation. QFIL tests also cover full no-output preflight, including source ranges and Sparse CRC integrity. GUI smoke tests cover path validation, widgets, language and speed settings, recent files, worker integration, analysis, batch conversion, and the packaged self-test entry point. GitHub Actions runs core tests on Python 3.10–3.14 on Windows and Linux; GUI smoke tests run on Windows and Linux with PySide6.
 
 ## Limitations and safety
 

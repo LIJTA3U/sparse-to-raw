@@ -106,6 +106,14 @@ python sparse_to_raw.py --merge-parts super.img_sparsechunk.0 super.img_sparsech
 py sparse_to_raw.py qfil-analyze rawprogram0.xml --patch-xml patch0.xml --search-dir . --json-report qfil-analysis.json
 ```
 
+Полная предварительная проверка перед созданием выходных файлов:
+
+```bat
+py sparse_to_raw.py qfil-validate rawprogram0.xml rawprogram1.xml --patch-xml patch0.xml --search-dir . --output-dir raw-output
+```
+
+`qfil-validate` проверяет длины и смещения исходных файлов, полностью валидирует каждый Sparse-источник и его контрольные суммы без раскрытия в RAW, разрешает секторные диапазоны, обнаруживает пересечения, проверяет конфликты имён и оценивает свободное место. Команда не создаёт каталог результата или RAW-образы. Путь `--output-dir` нужен только для расчёта планируемых имён и проверки свободного места на целевом томе.
+
 Сборка отдельного RAW-образа для каждой физической партиции/LUN:
 
 ```bat
@@ -139,7 +147,7 @@ usage: sparse_to_raw.py [-h] [--lang {en,ru}] [--version] [--merge-parts SPARSE_
                         [input_sparse] [output_raw]
 
 Подкоманды: compare LEFT RIGHT | raw-to-sparse INPUT_RAW OUTPUT_SPARSE
-Команды QFIL: qfil-analyze RAWPROGRAM.XML ... | qfil-build RAWPROGRAM.XML ... --output-dir DIR
+Команды QFIL: qfil-analyze RAWPROGRAM.XML ... | qfil-validate RAWPROGRAM.XML ... --output-dir DIR | qfil-build RAWPROGRAM.XML ... --output-dir DIR
 ```
 
 | Параметр | Описание |

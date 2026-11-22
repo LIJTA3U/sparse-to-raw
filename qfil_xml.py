@@ -19,7 +19,7 @@ import time
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, BinaryIO, Iterable
+from typing import Any, BinaryIO, Callable, Iterable
 
 from cli_i18n import tr, localize_error
 
@@ -483,17 +483,29 @@ def build_qfil_raw_images(
     disk_sectors: dict[int, int] | None = None,
     force: bool = False,
     allow_overlaps: bool = False,
+    validate_only: bool = False,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
-    """Build one zero-initialized RAW image for each physical partition/LUN.
+    """Build one zero-initialized RAW image per LUN, or run its complete preflight.
 
-    Files are assembled into temporary output files first. They are published only
-    after every program source has been found and every Sparse input has validated.
-    DONT_CARE areas and explicitly erased ranges are left zero-filled.
+    In validation-only mode no output directory or RAW file is created. Source
+    ranges, sector geometry, collisions, output sizes and Sparse integrity are
+    checked using the same planning path as a real assembly.
     """
     output_root = Path(output_dir).expanduser().resolve()
-    output_root.mkdir(parents=True, exist_ok=True)
-    if not output_root.is_dir():
-        raise NotADirectoryError(f"Output path is not a directory: {output_root}")
+    if validate_only:
+        if output_root.exists() and not output_root.is_dir():
+            raise NotADirectoryError(f"Output path is not a directory: {output_root}")
+        disk_check_root = output_root
+        while not disk_check_root.exists() and disk_check_root != disk_check_root.parent:
+            disk_check_root = disk_check_root.parent
+        if not disk_check_root.is_dir():
+            raise NotADirectoryError(f"No existing directory is available for output: {output_root}")
+    else:
+        output_root.mkdir(parents=True, exist_ok=True)
+        if not output_root.is_dir():
+            raise NotADirectoryError(f"Output path is not a directory: {output_root}")
+        disk_check_root = output_root
     disk_sizes = _disk_size_map(disk_sectors)
     analysis = analyze_qfil_package(
         rawprogram_files,
@@ -549,6 +561,7 @@ def build_qfil_raw_images(
     effective_windows: dict[int, list[tuple[int, int, dict[str, Any]]]] = defaultdict(list)
     ends_by_lun: dict[int, int] = defaultdict(int)
     output_sector_size: dict[int, int] = {}
+    sparse_validation_cache: dict[str, dict[str, Any]] = {}
     for item in parsed_programs:
         lun = item["physical_partition_number"]
         start, sectors, sector_size = _program_range(item, disk_sizes)
@@ -574,6 +587,39 @@ def build_qfil_raw_images(
                         "non-zero offsets in compressed Sparse files are not supported"
                     )
                 expanded_size = _read_declared_raw_size(source)
+                if validate_only:
+                    source_key = str(source.resolve())
+                    if source_key not in sparse_validation_cache:
+                        # Validate the entire Sparse stream and all stored CRCs without
+                        # expanding it to a temporary RAW file.
+                        from sparse_validator import validate_sparse
+
+                        def relay_sparse_progress(item: dict[str, Any]) -> None:
+                            if progress_callback is not None:
+                                update = dict(item)
+                                update["source"] = source.name
+                                update["stage"] = "sparse_validation"
+                                progress_callback(update)
+
+                        sparse_report = validate_sparse(
+                            source,
+                            calculate_sha256=False,
+                            progress_callback=relay_sparse_progress if progress_callback is not None else None,
+                        )
+                        if not sparse_report.get("valid"):
+                            details = "; ".join(sparse_report.get("errors", [])) or "invalid Sparse data"
+                            raise QFILManifestError(
+                                f"Sparse source {source.name} failed full validation: {details}"
+                            )
+                        sparse_validation_cache[source_key] = {
+                            "input": source_key,
+                            "valid": True,
+                            "raw_size_bytes": sparse_report.get("raw_size_bytes", expanded_size),
+                            "file_size_bytes": sparse_report.get("file_size_bytes"),
+                            "integrity_level": sparse_report.get("integrity_level", "unknown"),
+                            "chunk_counts": sparse_report.get("chunk_counts", {}),
+                            "warnings": sparse_report.get("warnings", []),
+                        }
                 if expanded_size % sector_size:
                     raise QFILManifestError(
                         f"Expanded Sparse size for {source.name} is not aligned to {sector_size}-byte sectors"
@@ -685,14 +731,36 @@ def build_qfil_raw_images(
         })
         total_bytes += size_bytes
 
-    usage = shutil.disk_usage(output_root)
+    usage = shutil.disk_usage(disk_check_root)
     margin = max(16 * 1024 * 1024, total_bytes // 100)
     required = total_bytes + margin
     if usage.free < required:
         raise OSError(
-            f"Not enough free space in {output_root}: {_format_size(usage.free)} available, "
+            f"Not enough free space in {disk_check_root}: {_format_size(usage.free)} available, "
             f"about {_format_size(required)} required (including a safety margin)"
         )
+
+    if validate_only:
+        planned_outputs = []
+        for spec in output_specs:
+            planned_outputs.append({key: value for key, value in spec.items() if not key.startswith("_")})
+        return {
+            "operation": "qfil-package-validation",
+            "format": "Qualcomm QFIL package preflight",
+            "valid": True,
+            "raw_outputs_created": False,
+            "output_dir": str(output_root),
+            "outputs": planned_outputs,
+            "output_count": len(planned_outputs),
+            "total_output_bytes": total_bytes,
+            "total_output_human": _format_size(total_bytes),
+            "required_disk_bytes": required,
+            "available_disk_bytes": usage.free,
+            "sparse_validations": list(sparse_validation_cache.values()),
+            "overlaps_allowed": bool(allow_overlaps),
+            "analysis": analysis,
+            "patches_applied": False,
+        }
 
     staged_paths: list[Path] = []
     committed: list[Path] = []
@@ -780,6 +848,39 @@ def build_qfil_raw_images(
                 pass
 
 
+def validate_qfil_package(
+    rawprogram_files: Iterable[str | Path],
+    output_dir: str | Path,
+    patch_files: Iterable[str | Path] | None = None,
+    *,
+    search_dirs: Iterable[str | Path] | None = None,
+    disk_sectors: dict[int, int] | None = None,
+    force: bool = False,
+    allow_overlaps: bool = False,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    """Run the complete QFIL assembly preflight without creating RAW outputs."""
+    return build_qfil_raw_images(
+        rawprogram_files,
+        output_dir,
+        patch_files,
+        search_dirs=search_dirs,
+        disk_sectors=disk_sectors,
+        force=force,
+        allow_overlaps=allow_overlaps,
+        validate_only=True,
+        progress_callback=progress_callback,
+    )
+
+
+def parse_disk_sectors_text(value: str | None) -> dict[int, int]:
+    """Parse GUI input such as ``0=61071360; 1=61071360``."""
+    if not value or not value.strip():
+        return {}
+    entries = [item.strip() for item in re.split(r"[;,]", value) if item.strip()]
+    return _parse_disk_sizes(entries)
+
+
 def _parse_disk_sizes(values: list[str] | None) -> dict[int, int]:
     result: dict[int, int] = {}
     for value in values or []:
@@ -838,15 +939,42 @@ def run_qfil_cli(command: str, argv: list[str] | None = None) -> int:
             formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         )
         _add_common_cli_options(parser)
-    elif command == "qfil-build":
+    elif command in {"qfil-build", "qfil-validate"}:
+        is_validate = command == "qfil-validate"
         parser = argparse.ArgumentParser(
-            prog="sparse_to_raw.py qfil-build",
-            description=("Собирать RAW-образы из QFIL rawprogram-манифестов с заполнением незаданных областей нулями." if tr("lang") == "язык CLI" else "Assemble zero-initialized RAW images from QFIL rawprogram manifests."),
+            prog=f"sparse_to_raw.py {command}",
+            description=(
+                "Полностью проверить комплект QFIL и все Sparse-источники без создания RAW-файлов."
+                if is_validate and tr("lang") == "язык CLI" else
+                "Run the complete QFIL package preflight, including Sparse integrity, without creating RAW files."
+                if is_validate else
+                "Собирать RAW-образы из QFIL rawprogram-манифестов с заполнением незаданных областей нулями."
+                if tr("lang") == "язык CLI" else
+                "Assemble zero-initialized RAW images from QFIL rawprogram manifests."
+            ),
             formatter_class=argparse.ArgumentDefaultsHelpFormatter,
         )
         _add_common_cli_options(parser)
-        parser.add_argument("--output-dir", required=True, metavar="DIR", help=("каталог для файлов physical_partition_N.raw" if tr("lang") == "язык CLI" else "folder for physical_partition_N.raw outputs"))
-        parser.add_argument("--allow-overlap", action="store_true", help=("разрешить пересечения диапазонов; более поздние XML-записи перезаписывают ранние байты" if tr("lang") == "язык CLI" else "allow overlapping program ranges; later XML entries overwrite earlier bytes"))
+        if is_validate:
+            for action in parser._actions:
+                if action.dest == "force":
+                    action.help = (
+                        "разрешить проверку при существующих планируемых RAW-файлах и замену JSON-отчёта; RAW не записываются"
+                        if tr("lang") == "язык CLI" else
+                        "allow existing planned RAW paths and replace the JSON report; no RAW files are written"
+                    )
+        parser.add_argument("--output-dir", required=True, metavar="DIR", help=(
+            "каталог планируемых файлов physical_partition_N.raw (не создаётся при проверке)"
+            if is_validate and tr("lang") == "язык CLI" else
+            "folder for planned physical_partition_N.raw outputs (not created during validation)"
+            if is_validate else
+            "каталог для файлов physical_partition_N.raw" if tr("lang") == "язык CLI" else
+            "folder for physical_partition_N.raw outputs"
+        ))
+        parser.add_argument("--allow-overlap", action="store_true", help=(
+            "разрешить намеренные пересечения диапазонов" if tr("lang") == "язык CLI" else
+            "allow intentional overlapping program ranges"
+        ))
     else:
         raise ValueError(f"Unknown QFIL command: {command}")
 
@@ -911,6 +1039,31 @@ def run_qfil_cli(command: str, argv: list[str] | None = None) -> int:
                 print(tr("unresolved"))
             else:
                 print(tr("analysis_done"))
+        elif command == "qfil-validate":
+            report = validate_qfil_package(
+                args.rawprogram_xml,
+                args.output_dir,
+                args.patch_xml,
+                search_dirs=args.search_dir,
+                disk_sectors=sizes,
+                force=args.force,
+                allow_overlaps=args.allow_overlap,
+            )
+            print("\n" + tr("qfil_validation"))
+            print("=" * 72)
+            print(tr("validation_passed"))
+            for item in report["outputs"]:
+                print(f"  LUN {item['physical_partition_number']}: {item['output']}")
+                print(f"    {tr('size'):<8}: {_format_size(item['size_bytes'])}")
+                print(f"    {tr('programs')} : {item['program_count']} · {tr('erases')}: {item['erase_count']}")
+            if report["sparse_validations"]:
+                print("\n" + tr("sparse_sources_validated"))
+                for item in report["sparse_validations"]:
+                    print(f"  [OK] {Path(item['input']).name} · {item['integrity_level']}")
+                    for warning in item.get("warnings", []):
+                        print(f"    ! {warning}")
+            print(f"\n{tr('total_output')}: {report['total_output_human']} ({report['output_count']} RAW planned)")
+            print(tr("no_raw_created"))
         else:
             report = build_qfil_raw_images(
                 args.rawprogram_xml,

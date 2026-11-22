@@ -31,7 +31,8 @@ from PySide6.QtCore import QUrl
 import PySide6
 
 from diagnostics import DiagnosticStore, default_diagnostics_directory
-from qfil_xml import analyze_qfil_package, build_qfil_raw_images
+from qfil_xml import (analyze_qfil_package, build_qfil_raw_images,
+                      parse_disk_sectors_text, validate_qfil_package)
 from raw_to_sparse import raw_to_sparse, RawToSparseError
 from image_compare import compare_images, ComparisonCancelled
 from sparse_validator import validate_sparse
@@ -2104,6 +2105,31 @@ class AnalysisDialog(QDialog):
         QMessageBox.information(self, self.main.t("report_saved"), path)
 
 
+class QFILValidationWorker(QObject):
+    """Run the potentially long QFIL preflight away from the GUI thread."""
+    progress = Signal(dict)
+    succeeded = Signal(dict)
+    failed = Signal(str)
+    finished = Signal()
+
+    def __init__(self, arguments: dict[str, Any]) -> None:
+        super().__init__()
+        self.arguments = dict(arguments)
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            report = validate_qfil_package(
+                **self.arguments,
+                progress_callback=self.progress.emit,
+            )
+            self.succeeded.emit(report)
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+        finally:
+            self.finished.emit()
+
+
 class QFILDialog(QDialog):
     """GUI for inspecting QFIL manifests and assembling RAW images; never flashes devices."""
     def __init__(self, parent: "MainWindow") -> None:
@@ -2111,6 +2137,8 @@ class QFILDialog(QDialog):
         self.main = parent
         self.rawprograms: list[str] = []
         self.patches: list[str] = []
+        self._validation_thread: QThread | None = None
+        self._validation_worker: QFILValidationWorker | None = None
         self.setWindowTitle("QFIL XML — " + ("Manifest tools" if parent.language == "en" else "Работа с манифестами"))
         self.resize(900, 680)
         root = QVBoxLayout(self)
@@ -2124,12 +2152,27 @@ class QFILDialog(QDialog):
         form = QFormLayout()
         self.search_edit = QLineEdit(); self.search_edit.setPlaceholderText("Optional firmware folder" if parent.language == "en" else "Необязательная папка с прошивкой")
         search_row = QHBoxLayout(); search_row.addWidget(self.search_edit, 1); browse_search = QPushButton("Browse…" if parent.language == "en" else "Обзор…"); browse_search.clicked.connect(self._browse_search); search_row.addWidget(browse_search); form.addRow("Search folder:" if parent.language == "en" else "Папка поиска:", search_row)
+        self.disk_sectors_edit = QLineEdit()
+        self.disk_sectors_edit.setPlaceholderText("Optional: 0=61071360; 1=61071360" if parent.language == "en" else "Необязательно: 0=61071360; 1=61071360")
+        form.addRow("Disk sectors (LUN=COUNT):" if parent.language == "en" else "Размер диска в секторах (LUN=COUNT):", self.disk_sectors_edit)
         self.output_edit = QLineEdit(str(Path.home() / "qfil-raw-output")); output_row = QHBoxLayout(); output_row.addWidget(self.output_edit, 1); browse_out = QPushButton("Browse…" if parent.language == "en" else "Обзор…"); browse_out.clicked.connect(self._browse_output); output_row.addWidget(browse_out); form.addRow("Output folder:" if parent.language == "en" else "Папка результата:", output_row)
         root.addLayout(form)
         self.allow_overlap = QCheckBox("Allow overlapping program ranges (advanced)" if parent.language == "en" else "Разрешить пересекающиеся диапазоны (дополнительно)"); root.addWidget(self.allow_overlap)
-        actions = QHBoxLayout(); analyze = QPushButton("Analyze package" if parent.language == "en" else "Анализировать пакет"); analyze.clicked.connect(self._analyze); build = QPushButton("Build RAW images" if parent.language == "en" else "Собрать RAW-образы"); build.clicked.connect(self._build); actions.addWidget(analyze); actions.addWidget(build); root.addLayout(actions)
+        actions = QHBoxLayout()
+        self.analyze_button = QPushButton("Analyze package" if parent.language == "en" else "Анализировать пакет")
+        self.analyze_button.clicked.connect(self._analyze)
+        self.validate_button = QPushButton("Validate package" if parent.language == "en" else "Проверить пакет")
+        self.validate_button.clicked.connect(self._validate)
+        self.build_button = QPushButton("Build RAW images" if parent.language == "en" else "Собрать RAW-образы")
+        self.build_button.clicked.connect(self._build)
+        actions.addWidget(self.analyze_button); actions.addWidget(self.validate_button); actions.addWidget(self.build_button); root.addLayout(actions)
+        self.validation_progress = QProgressBar()
+        self.validation_progress.setRange(0, 100)
+        self.validation_progress.setValue(0)
+        self.validation_progress.setFormat("Ready" if parent.language == "en" else "Готово")
+        root.addWidget(self.validation_progress)
         self.output = QTextEdit(); self.output.setReadOnly(True); self.output.setMinimumHeight(260); root.addWidget(self.output, 1)
-        close = QPushButton("Close" if parent.language == "en" else "Закрыть"); close.clicked.connect(self.close); root.addWidget(close)
+        self.close_button = QPushButton("Close" if parent.language == "en" else "Закрыть"); self.close_button.clicked.connect(self.close); root.addWidget(self.close_button)
         self.setStyleSheet(f"QDialog{{background:{COLORS['background']};color:{COLORS['text']}}} QLineEdit,QTextEdit{{background:#07111b;color:{COLORS['text']};border:1px solid #29434f}} QPushButton{{background:#0a1b27;color:{COLORS['cyan']};border:1px solid #24505e;padding:6px}}")
 
     def _set_raw(self, paths: list[str]) -> None:
@@ -2151,7 +2194,12 @@ class QFILDialog(QDialog):
     def _inputs(self) -> dict[str, Any]:
         if not self.rawprograms: raise ValueError("Select at least one rawprogram XML file")
         roots = [self.search_edit.text().strip()] if self.search_edit.text().strip() else []
-        return {"rawprogram_files": self.rawprograms, "patch_files": self.patches, "search_dirs": roots}
+        return {
+            "rawprogram_files": self.rawprograms,
+            "patch_files": self.patches,
+            "search_dirs": roots,
+            "disk_sectors": parse_disk_sectors_text(self.disk_sectors_edit.text()),
+        }
     def _analyze(self) -> None:
         try:
             report = analyze_qfil_package(**self._inputs())
@@ -2164,6 +2212,101 @@ class QFILDialog(QDialog):
             self.output.setPlainText("\n".join(lines))
         except Exception as exc:
             QMessageBox.warning(self, "QFIL", f"{type(exc).__name__}: {exc}")
+    def _validate(self) -> None:
+        if self._validation_thread is not None and self._validation_thread.isRunning():
+            return
+        try:
+            if not self.output_edit.text().strip():
+                raise ValueError("Select an output folder for the preflight plan")
+            arguments = self._inputs()
+            arguments.update({
+                "output_dir": self.output_edit.text().strip(),
+                "force": False,
+                "allow_overlaps": self.allow_overlap.isChecked(),
+            })
+        except Exception as exc:
+            QMessageBox.warning(self, "QFIL", f"{type(exc).__name__}: {exc}")
+            return
+
+        self.analyze_button.setEnabled(False)
+        self.validate_button.setEnabled(False)
+        self.build_button.setEnabled(False)
+        self.close_button.setEnabled(False)
+        self.validation_progress.setRange(0, 100)
+        self.validation_progress.setValue(0)
+        self.validation_progress.setFormat("Validating package…" if self.main.language == "en" else "Проверка пакета…")
+        self.output.setPlainText(
+            "Validating QFIL sources. No RAW files will be created…" if self.main.language == "en" else
+            "Проверка исходных данных QFIL. RAW-файлы создаваться не будут…"
+        )
+
+        self._validation_thread = QThread(self)
+        self._validation_worker = QFILValidationWorker(arguments)
+        self._validation_worker.moveToThread(self._validation_thread)
+        self._validation_thread.started.connect(self._validation_worker.run)
+        self._validation_worker.progress.connect(self._on_validation_progress)
+        self._validation_worker.succeeded.connect(self._on_validation_succeeded)
+        self._validation_worker.failed.connect(self._on_validation_failed)
+        self._validation_worker.finished.connect(self._validation_thread.quit)
+        self._validation_worker.finished.connect(self._validation_worker.deleteLater)
+        self._validation_thread.finished.connect(self._on_validation_finished)
+        self._validation_thread.finished.connect(self._validation_thread.deleteLater)
+        self._validation_thread.start()
+
+    @Slot(dict)
+    def _on_validation_progress(self, data: dict[str, Any]) -> None:
+        percent = max(0, min(100, int(data.get("percent", 0))))
+        source = str(data.get("source", ""))
+        label = f"{source}: {percent}%" if source else f"{percent}%"
+        self.validation_progress.setValue(percent)
+        self.validation_progress.setFormat(label)
+
+    @Slot(dict)
+    def _on_validation_succeeded(self, result: dict[str, Any]) -> None:
+        lines = [
+            "QFIL package validation passed" if self.main.language == "en" else "Проверка пакета QFIL пройдена",
+            "No RAW files were created." if self.main.language == "en" else "RAW-файлы не создавались.",
+            "",
+            json.dumps(result, ensure_ascii=False, indent=2),
+        ]
+        self.output.setPlainText("\n".join(lines))
+        self.validation_progress.setValue(100)
+        self.validation_progress.setFormat("Validation complete" if self.main.language == "en" else "Проверка завершена")
+        QMessageBox.information(
+            self,
+            "QFIL",
+            "All inputs passed preflight. No RAW files were created." if self.main.language == "en" else
+            "Все входные данные прошли проверку. RAW-файлы не создавались.",
+        )
+
+    @Slot(str)
+    def _on_validation_failed(self, message: str) -> None:
+        self.output.setPlainText(message)
+        self.validation_progress.setValue(0)
+        self.validation_progress.setFormat("Validation failed" if self.main.language == "en" else "Проверка не пройдена")
+        QMessageBox.warning(self, "QFIL", message)
+
+    @Slot()
+    def _on_validation_finished(self) -> None:
+        self.analyze_button.setEnabled(True)
+        self.validate_button.setEnabled(True)
+        self.build_button.setEnabled(True)
+        self.close_button.setEnabled(True)
+        self._validation_worker = None
+        self._validation_thread = None
+
+    def closeEvent(self, event) -> None:  # noqa: N802
+        if self._validation_thread is not None and self._validation_thread.isRunning():
+            QMessageBox.information(
+                self,
+                "QFIL",
+                "Wait for package validation to finish before closing this window." if self.main.language == "en" else
+                "Дождитесь завершения проверки пакета перед закрытием окна.",
+            )
+            event.ignore()
+            return
+        super().closeEvent(event)
+
     def _build(self) -> None:
         try:
             if not self.output_edit.text().strip(): raise ValueError("Select an output folder")

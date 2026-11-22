@@ -1923,7 +1923,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     set_language(selected_language)
     arguments = filtered
-    if arguments and arguments[0] in {"qfil-analyze", "qfil-build"}:
+    if arguments and arguments[0] in {"qfil-analyze", "qfil-validate", "qfil-build"}:
         from qfil_xml import run_qfil_cli
         return run_qfil_cli(arguments[0], arguments[1:])
     if arguments and arguments[0] in {"super-info", "super-extract"}:

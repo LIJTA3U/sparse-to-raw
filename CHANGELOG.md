@@ -1,6 +1,8 @@
 ## [Unreleased] — v0.7.0 development
 
 ### Added
+- Added `qfil-validate` for a complete no-output QFIL preflight: source-range checks, full streaming validation of referenced Sparse files and CRCs, per-LUN output planning, collision checks, and available-space checks.
+- Added QFIL GUI controls for per-LUN disk sector counts and a background **Validate package** action with progress reporting before RAW assembly.
 - Android Super Image inspection and extraction for RAW and Android Sparse inputs: LP geometry/metadata checksum validation, primary/backup metadata fallback, slot selection, partition/group/extent listing, and extraction of selected logical partitions.
 - `super-info` and `super-extract` CLI commands with optional JSON reports.
 - Regression fixtures for LP partitions assembled from multiple physically separated extents, covering RAW, Android Sparse, and CLI extraction paths.

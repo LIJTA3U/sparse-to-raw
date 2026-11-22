@@ -8,7 +8,7 @@ LANG = "en"
 TEXT = {
     "en": {
         "description": "Convert, validate and inspect Android Sparse images. The CLI uses only the Python standard library.",
-        "epilog": "Validate an Android Sparse image:\n  python sparse_to_raw.py validate image.sparse --json-report validation.json\n\nCompare logical images:\n  python sparse_to_raw.py compare image.raw image.sparse\n\nQFIL XML examples:\n  python sparse_to_raw.py qfil-analyze rawprogram0.xml --patch-xml patch0.xml\n  python sparse_to_raw.py qfil-build rawprogram0.xml --output-dir raw\n\nAndroid Super Image examples:\n  python sparse_to_raw.py super-info super.img --slot 0\n  python sparse_to_raw.py super-extract super.img --output-dir extracted --partition system\n\nExisting files are protected from overwrite by default; use --force to replace them.",
+        "epilog": "Validate an Android Sparse image:\n  python sparse_to_raw.py validate image.sparse --json-report validation.json\n\nCompare logical images:\n  python sparse_to_raw.py compare image.raw image.sparse\n\nQFIL XML examples:\n  python sparse_to_raw.py qfil-analyze rawprogram0.xml --patch-xml patch0.xml\n  python sparse_to_raw.py qfil-validate rawprogram0.xml --search-dir firmware --output-dir raw\n  python sparse_to_raw.py qfil-build rawprogram0.xml --output-dir raw\n\nAndroid Super Image examples:\n  python sparse_to_raw.py super-info super.img --slot 0\n  python sparse_to_raw.py super-extract super.img --output-dir extracted --partition system\n\nExisting files are protected from overwrite by default; use --force to replace them.",
         "input": "input Android Sparse image", "output_pos": "destination RAW image",
         "merge": "merge 2+ independent Sparse files in the supplied order (requires --output)",
         "output": "destination RAW file for --merge-parts", "info": "validate the image and display detailed information without conversion",
@@ -54,10 +54,12 @@ TEXT = {
         "unresolved": "Analysis completed with unresolved source files.", "analysis_done": "Analysis completed.",
         "qfil_assembly": "QFIL RAW ASSEMBLY", "programs": "programs", "erases": "erases", "total_output": "Total output",
         "assembly_done": "Assembly completed. Patch XML was not applied.", "output": "Output", "size": "size", "sha256": "SHA-256",
+        "qfil_validation": "QFIL PACKAGE PREFLIGHT", "validation_passed": "All QFIL inputs and output ranges passed preflight.",
+        "sparse_sources_validated": "SPARSE SOURCE INTEGRITY", "no_raw_created": "Validation only: no RAW images were created.",
     },
     "ru": {
         "description": "Конвертация, проверка и анализ Android Sparse. CLI использует только стандартную библиотеку Python.",
-        "epilog": "Проверка Android Sparse:\n  python sparse_to_raw.py validate image.sparse --json-report validation.json\n\nЛогическое сравнение образов:\n  python sparse_to_raw.py compare image.raw image.sparse\n\nПримеры QFIL XML:\n  python sparse_to_raw.py qfil-analyze rawprogram0.xml --patch-xml patch0.xml\n  python sparse_to_raw.py qfil-build rawprogram0.xml --output-dir raw\n\nПримеры Android Super Image:\n  python sparse_to_raw.py super-info super.img --slot 0\n  python sparse_to_raw.py super-extract super.img --output-dir extracted --partition system\n\nСуществующие файлы защищены от перезаписи; для замены используйте --force.",
+        "epilog": "Проверка Android Sparse:\n  python sparse_to_raw.py validate image.sparse --json-report validation.json\n\nЛогическое сравнение образов:\n  python sparse_to_raw.py compare image.raw image.sparse\n\nПримеры QFIL XML:\n  python sparse_to_raw.py qfil-analyze rawprogram0.xml --patch-xml patch0.xml\n  python sparse_to_raw.py qfil-validate rawprogram0.xml --search-dir firmware --output-dir raw\n  python sparse_to_raw.py qfil-build rawprogram0.xml --output-dir raw\n\nПримеры Android Super Image:\n  python sparse_to_raw.py super-info super.img --slot 0\n  python sparse_to_raw.py super-extract super.img --output-dir extracted --partition system\n\nСуществующие файлы защищены от перезаписи; для замены используйте --force.",
         "input": "исходный Android Sparse Image", "output_pos": "путь к выходному RAW-образу",
         "merge": "объединить 2+ самостоятельных Sparse-файла в указанном порядке (нужен --output)",
         "output": "выходной RAW-файл для --merge-parts", "info": "проверить образ и вывести подробную информацию без конвертации",
@@ -103,6 +105,8 @@ TEXT = {
         "unresolved": "Анализ завершён: остались неразрешённые исходные файлы.", "analysis_done": "Анализ завершён.",
         "qfil_assembly": "СБОРКА QFIL RAW", "programs": "операций program", "erases": "erase", "total_output": "Всего создано",
         "assembly_done": "Сборка завершена. Patch XML не применялся.", "output": "Результат", "size": "размер", "sha256": "SHA-256",
+        "qfil_validation": "ПРЕДВАРИТЕЛЬНАЯ ПРОВЕРКА QFIL", "validation_passed": "Все входные данные QFIL и диапазоны выходных образов прошли проверку.",
+        "sparse_sources_validated": "ПРОВЕРКА ЦЕЛОСТНОСТИ SPARSE-ИСТОЧНИКОВ", "no_raw_created": "Выполнена только проверка: RAW-образы не создавались.",
     },
 }
 

@@ -13,6 +13,8 @@ from qfil_xml import (
     QFILManifestError,
     analyze_qfil_package,
     build_qfil_raw_images,
+    parse_disk_sectors_text,
+    validate_qfil_package,
 )
 from sparse_to_raw import HEADER_FMT, MAGIC, main
 
@@ -246,6 +248,102 @@ class QFILXMLTests(unittest.TestCase):
         self.assertEqual(code, 0, err.getvalue())
         self.assertIn("QFIL MANIFEST ANALYSIS", out.getvalue())
         self.assertIn("PATCH OPERATIONS (NOT APPLIED)", out.getvalue())
+
+    def test_preflight_validates_sparse_source_without_creating_raw_files(self) -> None:
+        output_dir = self.root / "preflight-output-not-created"
+        progress_events: list[dict] = []
+        report = validate_qfil_package(
+            [self.raw_program],
+            output_dir,
+            [self.patch_xml],
+            search_dirs=[self.root / "firmware"],
+            progress_callback=progress_events.append,
+        )
+        self.assertTrue(report["valid"])
+        self.assertFalse(report["raw_outputs_created"])
+        self.assertFalse(output_dir.exists())
+        self.assertEqual(report["output_count"], 1)
+        self.assertEqual(report["sparse_validations"][0]["input"], str(self.sparse_source.resolve()))
+        self.assertEqual(report["sparse_validations"][0]["integrity_level"], "CRC32-protected")
+        self.assertTrue(progress_events)
+        self.assertEqual(progress_events[0]["source"], "system.img")
+
+    def test_preflight_rejects_sparse_crc_failure_without_creating_outputs(self) -> None:
+        damaged = self.images_dir / "damaged-system.img"
+        damaged.write_bytes(_make_sparse(self.sparse_data)[:-1] + b"X")
+        xml = self.manifest_dir / "damaged-sparse.xml"
+        xml.write_text(
+            '<data><program filename="damaged-system.img" label="system" start_sector="0" '
+            'num_partition_sectors="2" SECTOR_SIZE_IN_BYTES="4" sparse="true" /></data>',
+            encoding="utf-8",
+        )
+        output_dir = self.root / "invalid-preflight-output"
+        with self.assertRaisesRegex(QFILManifestError, "failed full validation"):
+            validate_qfil_package([xml], output_dir, search_dirs=[self.images_dir])
+        self.assertFalse(output_dir.exists())
+
+    def test_preflight_checks_end_relative_sector_with_disk_size(self) -> None:
+        xml = self.manifest_dir / "preflight-end-relative.xml"
+        xml.write_text(
+            '<data><program filename="boot.img" start_sector="NUM_DISK_SECTORS-2" '
+            'num_partition_sectors="2" SECTOR_SIZE_IN_BYTES="4" /></data>',
+            encoding="utf-8",
+        )
+        report = validate_qfil_package(
+            [xml], self.root / "planned-output", search_dirs=[self.root / "firmware"],
+            disk_sectors={0: 10},
+        )
+        self.assertTrue(report["valid"])
+        self.assertEqual(report["outputs"][0]["sector_count"], 10)
+
+    def test_preflight_detects_short_raw_source(self) -> None:
+        xml = self.manifest_dir / "short-raw.xml"
+        xml.write_text(
+            '<data><program filename="boot.img" start_sector="0" num_partition_sectors="3" '
+            'SECTOR_SIZE_IN_BYTES="4" /></data>',
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(QFILManifestError, "shorter than the manifest range"):
+            validate_qfil_package([xml], self.root / "short-output", search_dirs=[self.root / "firmware"])
+
+    def test_parse_gui_disk_sector_specification(self) -> None:
+        self.assertEqual(parse_disk_sectors_text("0=61071360; 1=30535680"), {0: 61071360, 1: 30535680})
+        self.assertEqual(parse_disk_sectors_text("  "), {})
+        with self.assertRaisesRegex(QFILManifestError, "specified more than once"):
+            parse_disk_sectors_text("0=10;0=20")
+
+    def test_build_multiple_rawprogram_files_into_multiple_luns(self) -> None:
+        rawprogram1 = self.manifest_dir / "rawprogram1.xml"
+        rawprogram1.write_text(
+            '<data><program filename="boot.img" label="modem" start_sector="0" '
+            'num_partition_sectors="2" physical_partition_number="1" SECTOR_SIZE_IN_BYTES="4" /></data>',
+            encoding="utf-8",
+        )
+        output_dir = self.root / "multi-lun-output"
+        report = build_qfil_raw_images(
+            [self.raw_program, rawprogram1], output_dir, search_dirs=[self.root / "firmware"]
+        )
+        self.assertEqual(report["output_count"], 2)
+        self.assertEqual((output_dir / "physical_partition_0.raw").read_bytes(), b"\x00" * 4 + self.raw_data + b"\x00" * 4 + self.sparse_data)
+        self.assertEqual((output_dir / "physical_partition_1.raw").read_bytes(), self.raw_data)
+
+    def test_cli_qfil_validate_command_and_json_report(self) -> None:
+        out = StringIO()
+        err = StringIO()
+        output_dir = self.root / "cli-preflight-no-output"
+        report_path = self.root / "qfil-preflight.json"
+        with redirect_stdout(out), redirect_stderr(err):
+            code = main([
+                "qfil-validate", str(self.raw_program), "--output-dir", str(output_dir),
+                "--search-dir", str(self.root / "firmware"), "--json-report", str(report_path),
+            ])
+        self.assertEqual(code, 0, err.getvalue())
+        self.assertIn("QFIL PACKAGE PREFLIGHT", out.getvalue())
+        self.assertIn("no RAW", out.getvalue())
+        self.assertFalse(output_dir.exists())
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        self.assertTrue(report["valid"])
+        self.assertFalse(report["raw_outputs_created"])
 
     def test_cli_qfil_build_command_and_json_report(self) -> None:
         out = StringIO()

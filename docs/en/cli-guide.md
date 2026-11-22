@@ -106,6 +106,14 @@ Analyze Qualcomm manifests and locate the referenced firmware files:
 py sparse_to_raw.py qfil-analyze rawprogram0.xml --patch-xml patch0.xml --search-dir . --json-report qfil-analysis.json
 ```
 
+Run a complete preflight before creating any outputs:
+
+```bat
+py sparse_to_raw.py qfil-validate rawprogram0.xml rawprogram1.xml --patch-xml patch0.xml --search-dir . --output-dir raw-output
+```
+
+`qfil-validate` checks source-file lengths and offsets, validates every referenced Sparse source and its stored CRCs without expanding it to RAW, resolves sector ranges, detects overlaps, checks output-name collisions and estimates free-space requirements. It does not create the output directory or RAW images. The `--output-dir` value is used only to calculate planned output paths and check the target volume.
+
 Assemble one RAW image per physical partition/LUN:
 
 ```bat
@@ -139,7 +147,7 @@ usage: sparse_to_raw.py [-h] [--lang {en,ru}] [--version] [--merge-parts SPARSE_
                         [input_sparse] [output_raw]
 
 Subcommands: compare LEFT RIGHT | raw-to-sparse INPUT_RAW OUTPUT_SPARSE
-QFIL commands: qfil-analyze RAWPROGRAM.XML ... | qfil-build RAWPROGRAM.XML ... --output-dir DIR
+QFIL commands: qfil-analyze RAWPROGRAM.XML ... | qfil-validate RAWPROGRAM.XML ... --output-dir DIR | qfil-build RAWPROGRAM.XML ... --output-dir DIR
 ```
 
 | Option | Description |

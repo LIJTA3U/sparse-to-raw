@@ -32,6 +32,7 @@ from sparse_to_raw_gui import (  # noqa: E402
     SparseValidatorDialog,
     SparseValidatorWorker,
     SuperImageDialog,
+    QFILDialog,
     RawToSparseDialog,
     DiagnosticCenterDialog,
     BatchWorkerObject,
@@ -194,6 +195,22 @@ class SparseToRawGuiTests(unittest.TestCase):
             self.assertEqual(len(results), 1)
             self.assertTrue(results[0]["valid"])
             self.assertEqual(results[0]["operation"], "sparse-validation")
+
+    def test_qfil_dialog_exposes_full_preflight_and_disk_geometry_controls(self) -> None:
+        window = MainWindow()
+        dialog = QFILDialog(window)
+        try:
+            self.assertIsNotNone(dialog.disk_sectors_edit)
+            self.assertTrue(dialog.validate_button.text())
+            self.assertIsNotNone(dialog.validation_progress)
+            self.assertEqual(dialog.validation_progress.maximum(), 100)
+            dialog.rawprograms = ["rawprogram0.xml"]
+            dialog.disk_sectors_edit.setText("0=61071360; 1=30535680")
+            self.assertEqual(dialog._inputs()["disk_sectors"], {0: 61071360, 1: 30535680})
+            self.assertTrue(dialog.validate_button.isEnabled())
+        finally:
+            dialog.close()
+            window.close()
 
     def test_main_window_sets_application_icon_and_keeps_smooth_custom_frame(self) -> None:
         window = MainWindow()

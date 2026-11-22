@@ -16,6 +16,26 @@ py sparse_to_raw.py qfil-analyze rawprogram0.xml rawprogram1.xml --patch-xml pat
 
 The report includes operation type, label, LUN, sector coordinates, sector size, source filename, source-resolution result, partition summary and patch attributes. File lookup first checks the path relative to the XML manifest, then searches the manifest folder and each `--search-dir` recursively by filename. A name with multiple matching files is marked ambiguous; the tool does not choose one arbitrarily.
 
+## Full package preflight validation
+
+`qfil-analyze` quickly parses the XML and reports resolved/missing files. Before assembly, run the dedicated `qfil-validate` command:
+
+```bat
+py sparse_to_raw.py qfil-validate rawprogram0.xml rawprogram1.xml --patch-xml patch0.xml --search-dir . --output-dir raw-output
+```
+
+This runs the same preflight checks as assembly but **does not create the output directory or any RAW files**. It checks:
+
+- resolution of every file referenced by a `<program>` operation;
+- whether ordinary RAW sources are long enough after applying `file_sector_offset` and the requested sector count;
+- the complete structure of every `sparse="true"` source, including CRC32 checkpoints and the image checksum when present;
+- sector expressions, sector-size consistency, range boundaries and overlaps;
+- planned RAW sizes per LUN, existing output paths and available disk space.
+
+For coordinates relative to the end of a device, pass its sector count separately for each LUN. In the GUI, enter values separated by semicolons or commas, for example `0=61071360; 1=30535680`. Full Sparse validation runs in a background worker, and the progress bar reports progress for the current file.
+
+Save the detailed result with `--json-report`. Patch XML is still inspection-only and is never executed. A successful preflight does not replace independent verification of the RAW images after assembly.
+
 ## Assemble RAW images
 
 ```bat

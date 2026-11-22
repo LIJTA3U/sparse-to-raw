@@ -1,3 +1,12 @@
+## [Unreleased] — v0.7.0 development
+
+### Added
+- Added `qfil-validate`, a complete no-output QFIL package preflight. It checks RAW source lengths, full Sparse structure and CRC integrity, sector ranges, overlaps, planned output sizes and available disk space.
+- Added a background **Validate package** action with progress reporting and per-LUN disk-sector input to the QFIL GUI for `NUM_DISK_SECTORS-N` expressions.
+- Updated the bilingual QFIL guides with the preflight workflow.
+
+---
+
 ## v0.6.0 — stable release
 
 The v0.6.0 feature line is now released as a stable version. Windows packages were built by GitHub Actions; the packaged application was confirmed to run on a Windows computer without Python installed.
