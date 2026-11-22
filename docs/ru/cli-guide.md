@@ -201,3 +201,18 @@ py sparse_to_raw.py super-extract super.img --output-dir extracted --partition s
 ```
 
 `--partition` можно повторять. По умолчанию извлекаются все разделы. `--slot` по умолчанию равен `0`. Для RAW и Android Sparse входов используется один интерфейс; Sparse временно раскрывается в RAW. `--force` разрешает замену выходных файлов и JSON-отчёта. Текущая реализация поддерживает LP metadata 10.0–10.2 и извлечение extents только с block device index 0.
+
+
+## Анализ метаданных Android Verified Boot
+
+Команда `vbmeta-info` анализирует самостоятельный `vbmeta.img` или образ раздела с AVB footer:
+
+```powershell
+py sparse_to_raw.py vbmeta-info vbmeta.img
+py sparse_to_raw.py vbmeta-info system.img --json-report system-vbmeta.json
+py sparse_to_raw.py --lang en vbmeta-info vbmeta.img
+```
+
+Отчёт содержит требуемую версию libavb, алгоритм, rollback index и его расположение, флаги заголовка, release string, размерность и отпечатки публичного ключа, а также поддерживаемые descriptors типов Property, Hash, Hashtree, Kernel Cmdline и Chain Partition. Для поддерживаемого алгоритма инспектор вычисляет встроенный хеш VBMeta по заголовку и auxiliary block и сравнивает его с сохранённым значением. Несовпадение отражается в отчёте и не трактуется как результат проверки подписи.
+
+**Ограничение безопасности:** команда не проверяет RSA-подпись, не сравнивает публичный ключ с доверенным ключом или хранилищем устройства и не сопоставляет rollback index со значением, сохранённым на устройстве. Совпадение встроенного хеша само по себе не доказывает подлинность или доверие. Команда только читает входной файл и не изменяет его.

@@ -32,6 +32,7 @@ from sparse_to_raw_gui import (  # noqa: E402
     SparseValidatorDialog,
     SparseValidatorWorker,
     SuperImageDialog,
+    VBMetaInspectorDialog,
     QFILDialog,
     RawToSparseDialog,
     DiagnosticCenterDialog,
@@ -212,6 +213,20 @@ class SparseToRawGuiTests(unittest.TestCase):
             dialog.close()
             window.close()
 
+
+    def test_vbmeta_inspector_is_available_from_tools_menu(self) -> None:
+        window = MainWindow()
+        dialog = VBMetaInspectorDialog(window)
+        try:
+            self.assertEqual(window.vbmeta_action.text(), window.t("vbmeta_action"))
+            self.assertFalse(window.vbmeta_action.icon().isNull())
+            self.assertEqual(dialog.inspect_button.text(), window.t("vbmeta_inspect"))
+            self.assertEqual(dialog.table.columnCount(), 3)
+            self.assertIsNone(dialog.report)
+        finally:
+            dialog.close()
+            window.close()
+
     def test_main_window_sets_application_icon_and_keeps_smooth_custom_frame(self) -> None:
         window = MainWindow()
         try:
@@ -243,7 +258,7 @@ class SparseToRawGuiTests(unittest.TestCase):
                               window.compare_button, window.tools_button]
             self.assertTrue(all(button.isVisible() for button in top_buttons + bottom_buttons))
             self.assertTrue(all(not button.icon().isNull() for button in top_buttons + bottom_buttons))
-            self.assertEqual(len(window.tools_menu.actions()), 4)
+            self.assertEqual(len(window.tools_menu.actions()), 5)
             self.assertTrue(all(not action.icon().isNull() for action in window.tools_menu.actions() if not action.isSeparator()))
             self.assertTrue(window.merge_button.isEnabled())
             self.assertLess(max(button.geometry().bottom() for button in top_buttons),

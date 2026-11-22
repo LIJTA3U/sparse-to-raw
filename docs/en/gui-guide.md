@@ -82,3 +82,10 @@ Select **Validate** on the lower toolbar to open the standalone Sparse Validator
 ## Android Super Image tools
 
 Open **Super Image** from the first toolbar row. The dialog reads LP geometry and metadata, then lists logical partitions, sizes, groups, extents, and attributes. The source may be RAW or Android Sparse; Sparse is expanded into temporary RAW without modifying the original. Select a metadata slot, click **Read structure**, choose the partitions to extract, and select an output folder. Extraction runs in a worker thread and supports progress and cancellation. Changing the input path or slot invalidates the loaded table and requires a new inspection. LP metadata 10.0–10.2 is supported; multi-image retrofit layouts that use block-device indices other than 0 are not yet supported. See the [Super Image guide](super-image.md).
+
+
+## AVB / VBMeta Inspector
+
+Open **AVB / VBMeta Inspector** from the **Tools** menu. Select a standalone `vbmeta.img` or an Android partition image containing an AVB footer, then click **Inspect metadata**. The summary shows the AVB algorithm, rollback index, descriptor count, and embedded-digest status. The table lists supported Property, Hash, Hashtree, Kernel Cmdline, and Chain Partition descriptors; selecting a row displays its complete parsed fields in the details pane. The JSON report can be exported from the main window's report action after inspection.
+
+The inspector checks the VBMeta container bounds and the embedded digest when the algorithm is supported. It does **not** verify the RSA signature, establish that the public key is trusted, or compare rollback state with a connected device. It is a read-only diagnostic view, not an AVB verification or flashing tool. See the [AVB / VBMeta guide](avb-vbmeta.md).

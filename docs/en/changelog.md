@@ -1,9 +1,23 @@
 ## [Unreleased] — v0.7.0 development
 
 ### Added
+- Added the read-only `vbmeta-info` CLI command and AVB / VBMeta Inspector in the GUI Tools menu. It parses standalone VBMeta and AVB-footer images, header flags, rollback metadata, public-key fingerprints, and supported Property, Hash, Hashtree, Kernel Cmdline, and Chain Partition descriptors.
+- Added bounded parsing, block-overlap checks, and embedded SHA-256 / SHA-512 digest comparison for supported AVB algorithms. RSA signature verification, trusted-key validation, and device rollback-state comparison are intentionally not performed.
+- Added bilingual AVB / VBMeta CLI and GUI documentation.
 - Added `qfil-validate`, a complete no-output QFIL package preflight. It checks RAW source lengths, full Sparse structure and CRC integrity, sector ranges, overlaps, planned output sizes and available disk space.
 - Added a background **Validate package** action with progress reporting and per-LUN disk-sector input to the QFIL GUI for `NUM_DISK_SECTORS-N` expressions.
 - Updated the bilingual QFIL guides with the preflight workflow.
+- Android Super Image tools: LP geometry/metadata parsing, SHA-256 validation, backup-metadata fallback, partition/group/extent listing, and selected logical partition extraction from RAW and Android Sparse inputs.
+- `super-info` and `super-extract` CLI commands with JSON reports.
+- Dedicated Super Image GUI dialog with background inspection/extraction, progress, cancellation, and stale-metadata invalidation when the source or slot changes.
+
+### Changed
+- Reworked the main GUI toolbar: five primary sections stay in the first row, common actions use a compact second row, and Sparse merging, report export, and diagnostics are grouped under the Tools menu.
+- Standardized toolbar icons, tooltips, and button sizing; tightened spacing to prevent clipped labels.
+- Super Image extraction uses an atomic no-clobber publication unless `--force` is explicitly enabled.
+
+### Limitations
+- LP metadata versions 10.0–10.2 are supported. Extraction requires extents to reference block device index 0; multi-image retrofit layouts are not supported yet.
 
 ---
 
@@ -156,22 +170,6 @@ This release candidate consolidates the v0.6.0 feature line and is intended for 
 # Changelog
 
 This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-
-## [Unreleased] — v0.7.0 development
-
-### Added
-- Android Super Image tools: LP geometry/metadata parsing, SHA-256 validation, backup-metadata fallback, partition/group/extent listing, and selected logical partition extraction from RAW and Android Sparse inputs.
-- `super-info` and `super-extract` CLI commands with JSON reports.
-- Dedicated Super Image GUI dialog with background inspection/extraction, progress, cancellation, and stale-metadata invalidation when the source or slot changes.
-
-### Changed
-- Reworked the main GUI toolbar: five primary sections stay in the first row, common actions use a compact second row, and Sparse merging, report export, and diagnostics are grouped under the Tools menu.
-- Standardized toolbar icons, tooltips, and button sizing; tightened spacing to prevent clipped labels.
-- Super Image extraction uses an atomic no-clobber publication unless `--force` is explicitly enabled.
-
-### Limitations
-- LP metadata versions 10.0–10.2 are supported. Extraction requires extents to reference block device index 0; multi-image retrofit layouts are not supported yet.
-
 
 ## v0.6.0-dev2 — историческая запись разработки
 

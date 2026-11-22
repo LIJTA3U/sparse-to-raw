@@ -63,6 +63,22 @@ class CLILanguageTests(unittest.TestCase):
         self.assertIn("Анализировать манифесты", stdout.getvalue())
         self.assertIn("каталог прошивки", stdout.getvalue())
 
+
+    def test_vbmeta_help_uses_selected_language(self) -> None:
+        english = io.StringIO()
+        with contextlib.redirect_stdout(english):
+            with self.assertRaises(SystemExit) as raised:
+                sparse_to_raw.main(["vbmeta-info", "--help", "--lang", "en"])
+        self.assertEqual(raised.exception.code, 0)
+        self.assertIn("Read Android Verified Boot", english.getvalue())
+
+        russian = io.StringIO()
+        with contextlib.redirect_stdout(russian):
+            with self.assertRaises(SystemExit) as raised:
+                sparse_to_raw.main(["--lang", "ru", "vbmeta-info", "--help"])
+        self.assertEqual(raised.exception.code, 0)
+        self.assertIn("Прочитать метаданные Android Verified Boot", russian.getvalue())
+
     def test_language_option_is_removed_before_qfil_dispatch(self) -> None:
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):

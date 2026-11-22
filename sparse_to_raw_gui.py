@@ -38,6 +38,7 @@ from image_compare import compare_images, ComparisonCancelled
 from sparse_validator import validate_sparse
 from batch_profiles import BatchProfileError, load_batch_profile, save_batch_profile
 from super_image import inspect_super_image, extract_super_partitions, SuperImageCancelled
+from avb_inspector import inspect_vbmeta_image
 
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
@@ -109,6 +110,13 @@ I18N: dict[str, dict[str, str]] = {
         "super_button": "Super-образ", "super_title": "Инструменты Android Super Image",
         "tools_menu": "Инструменты", "recent": "Последние файлы", "recent_short": "Недавние",
         "save_report": "Сохранить отчёт…", "language": "Язык",
+        "vbmeta_action": "AVB / VBMeta Inspector", "vbmeta_title": "Анализ Android Verified Boot (AVB)",
+        "vbmeta_source": "Файл VBMeta или раздел с AVB footer", "vbmeta_pick": "Выберите vbmeta.img…",
+        "vbmeta_inspect": "Прочитать метаданные", "vbmeta_ready": "Выберите vbmeta.img или образ с AVB footer.",
+        "vbmeta_summary": "Алгоритм: {algorithm} · Rollback index: {rollback} · Descriptors: {count} · Embedded hash: {hash_status}",
+        "vbmeta_col_type": "Тип", "vbmeta_col_partition": "Раздел / ключ", "vbmeta_col_details": "Сведения",
+        "vbmeta_signature_note": "Важно: встроенный хеш проверяется, но RSA-подпись и доверие к ключу не проверяются. Rollback index не сравнивается с состоянием устройства.",
+        "vbmeta_close": "Закрыть", "vbmeta_no_descriptors": "В образе нет descriptors.",
         "super_source": "Исходный super-образ (RAW или Sparse)", "super_source_pick": "Выберите super.img…",
         "super_slot": "Слот метаданных", "super_analyze": "Прочитать структуру", "super_select_all": "Выбрать все",
         "super_select_none": "Снять выбор", "super_output": "Папка для извлечённых разделов",
@@ -321,6 +329,13 @@ I18N: dict[str, dict[str, str]] = {
         "super_button": "Super Image", "super_title": "Android Super Image Tools",
         "tools_menu": "Tools", "recent": "Recent files", "recent_short": "Recent",
         "save_report": "Save report…", "language": "Language",
+        "vbmeta_action": "AVB / VBMeta Inspector", "vbmeta_title": "Android Verified Boot (AVB) Inspector",
+        "vbmeta_source": "VBMeta image or partition image with AVB footer", "vbmeta_pick": "Select vbmeta.img…",
+        "vbmeta_inspect": "Inspect metadata", "vbmeta_ready": "Choose vbmeta.img or an image with an AVB footer.",
+        "vbmeta_summary": "Algorithm: {algorithm} · Rollback index: {rollback} · Descriptors: {count} · Embedded hash: {hash_status}",
+        "vbmeta_col_type": "Type", "vbmeta_col_partition": "Partition / key", "vbmeta_col_details": "Details",
+        "vbmeta_signature_note": "Important: the embedded hash is checked, but the RSA signature and key trust are not verified. The rollback index is not compared with device state.",
+        "vbmeta_close": "Close", "vbmeta_no_descriptors": "The image contains no descriptors.",
         "super_source": "Source super image (RAW or Sparse)", "super_source_pick": "Select super.img…",
         "super_slot": "Metadata slot", "super_analyze": "Read structure", "super_select_all": "Select all",
         "super_select_none": "Clear selection", "super_output": "Output folder for extracted partitions",
@@ -3040,6 +3055,152 @@ class SuperImageDialog(QDialog):
         event.accept()
 
 
+class VBMetaInspectorDialog(QDialog):
+    """Read-only inspector for standalone VBMeta images and AVB-footer images."""
+    def __init__(self, parent: "MainWindow") -> None:
+        super().__init__(parent)
+        self.main = parent
+        self.report: dict[str, Any] | None = None
+        self.setWindowTitle(parent.t("vbmeta_title"))
+        self.resize(1020, 720)
+        self.setMinimumSize(820, 580)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 14, 16, 14)
+        root.setSpacing(9)
+
+        intro = QLabel(parent.t("vbmeta_signature_note"))
+        intro.setWordWrap(True)
+        intro.setStyleSheet(f"color:{COLORS['yellow_light']}; background:{COLORS['panel_alt']}; border:1px solid {COLORS['border']}; padding:8px;")
+        root.addWidget(intro)
+
+        label = QLabel(parent.t("vbmeta_source"))
+        label.setObjectName("fieldLabel")
+        root.addWidget(label)
+        path_row = QHBoxLayout()
+        self.source_edit = QLineEdit()
+        self.source_edit.setPlaceholderText(parent.t("vbmeta_pick"))
+        path_row.addWidget(self.source_edit, 1)
+        self.browse_button = QPushButton(parent.t("browse"))
+        self.browse_button.setIcon(parent.icon_for("SP_DialogOpenButton"))
+        self.browse_button.clicked.connect(self._browse)
+        path_row.addWidget(self.browse_button)
+        self.inspect_button = QPushButton(parent.t("vbmeta_inspect"))
+        self.inspect_button.setIcon(parent.icon_for("SP_FileDialogDetailedView"))
+        self.inspect_button.clicked.connect(self._inspect)
+        path_row.addWidget(self.inspect_button)
+        root.addLayout(path_row)
+
+        self.summary = QLabel(parent.t("vbmeta_ready"))
+        self.summary.setWordWrap(True)
+        self.summary.setObjectName("panelHeading")
+        root.addWidget(self.summary)
+
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels([
+            parent.t("vbmeta_col_type"), parent.t("vbmeta_col_partition"),
+            parent.t("vbmeta_col_details"),
+        ])
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table.itemSelectionChanged.connect(self._show_selected_descriptor)
+        root.addWidget(self.table, 1)
+
+        self.details = QTextEdit()
+        self.details.setReadOnly(True)
+        self.details.setFont(QFont("Consolas", 9))
+        self.details.setMaximumHeight(220)
+        self.details.setPlaceholderText(parent.t("vbmeta_ready"))
+        root.addWidget(self.details)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        close_button = QPushButton(parent.t("vbmeta_close"))
+        close_button.setIcon(parent.icon_for("SP_DialogCloseButton"))
+        close_button.clicked.connect(self.close)
+        buttons.addWidget(close_button)
+        root.addLayout(buttons)
+
+    def _browse(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, self.main.t("vbmeta_source"), str(Path.home()),
+            "VBMeta / Android images (*.img *.bin *.vbmeta);;All files (*)",
+        )
+        if path:
+            self.source_edit.setText(path)
+            self.report = None
+            self.table.setRowCount(0)
+            self.details.clear()
+            self.summary.setText(self.main.t("vbmeta_ready"))
+
+    def _inspect(self) -> None:
+        source_text = self.source_edit.text().strip()
+        if not source_text:
+            QMessageBox.warning(self, self.windowTitle(), self.main.t("vbmeta_ready"))
+            return
+        try:
+            result = inspect_vbmeta_image(source_text)
+        except (OSError, ValueError) as exc:
+            self.report = None
+            self.table.setRowCount(0)
+            self.details.clear()
+            QMessageBox.critical(self, self.windowTitle(), str(exc))
+            return
+
+        self.report = result
+        self.table.setRowCount(0)
+        descriptors = result.get("descriptors", [])
+        for descriptor in descriptors:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            kind = str(descriptor.get("type", "UNKNOWN"))
+            partition = str(descriptor.get("partition_name") or descriptor.get("key") or "—")
+            if kind == "PROPERTY":
+                detail = str(descriptor.get("value", ""))[:180]
+            elif kind == "HASH":
+                detail = f"{descriptor.get('hash_algorithm', '?')} · {descriptor.get('image_size_bytes', 0):,} bytes"
+            elif kind == "HASHTREE":
+                detail = (f"{descriptor.get('hash_algorithm', '?')} · image {descriptor.get('image_size_bytes', 0):,} B · "
+                          f"tree {descriptor.get('tree_size_bytes', 0):,} B")
+            elif kind == "CHAIN_PARTITION":
+                key = descriptor.get("public_key", {})
+                detail = f"rollback slot {descriptor.get('rollback_index_location', '?')} · key {key.get('rsa_bits') or 'unknown'} bit"
+            elif kind == "KERNEL_CMDLINE":
+                detail = str(descriptor.get("kernel_cmdline", ""))[:180]
+            else:
+                detail = f"tag {descriptor.get('tag')} · {descriptor.get('size_bytes')} bytes"
+            for column, value in enumerate((kind, partition, detail)):
+                cell = QTableWidgetItem(value)
+                cell.setData(Qt.ItemDataRole.UserRole, descriptor)
+                self.table.setItem(row, column, cell)
+
+        self.summary.setText(self.main.t("vbmeta_summary").format(
+            algorithm=result.get("algorithm", "?"),
+            rollback=result.get("rollback_index", "?"),
+            count=result.get("descriptor_count", 0),
+            hash_status=result.get("embedded_hash", {}).get("status", "unknown"),
+        ))
+        self.details.setPlainText(json.dumps(result, ensure_ascii=False, indent=2))
+        if not descriptors:
+            self.summary.setText(self.summary.text() + " · " + self.main.t("vbmeta_no_descriptors"))
+        self.main.last_result = result
+        self.main.report_button.setEnabled(True)
+        self.main.add_recent(result["input"])
+
+    def _show_selected_descriptor(self) -> None:
+        if not self.report:
+            return
+        selected = self.table.selectedItems()
+        if not selected:
+            return
+        descriptor = selected[0].data(Qt.ItemDataRole.UserRole)
+        self.details.setPlainText(json.dumps(descriptor, ensure_ascii=False, indent=2))
+
+
 class SparseValidatorWorker(QObject):
     progress = Signal(dict)
     succeeded = Signal(dict)
@@ -4764,12 +4925,15 @@ class MainWindow(QWidget):
         self.tools_menu=QMenu(self)
         self.merge_button=QAction(self.icon_for("SP_DirLinkIcon"),self.t("merge"),self)
         self.merge_button.triggered.connect(self._open_merge)
+        self.vbmeta_action=QAction(self.icon_for("SP_MessageBoxInformation"),self.t("vbmeta_action"),self)
+        self.vbmeta_action.triggered.connect(self._open_vbmeta)
         self.report_button=QAction(self.icon_for("SP_DialogSaveButton"),self.t("save_report"),self)
         self.report_button.triggered.connect(self._save_last_report)
         self.report_button.setEnabled(False)
         self.diagnostics_button=QAction(self.icon_for("SP_MessageBoxInformation"),self.t("diagnostics_button"),self)
         self.diagnostics_button.triggered.connect(self._open_diagnostics)
         self.tools_menu.addAction(self.merge_button)
+        self.tools_menu.addAction(self.vbmeta_action)
         self.tools_menu.addAction(self.report_button)
         self.tools_menu.addSeparator()
         self.tools_menu.addAction(self.diagnostics_button)
@@ -4883,7 +5047,7 @@ class MainWindow(QWidget):
         self.analyze_button.setText(d["analyze"]); self.structure_button.setText(d["structure_button"])
         self.queue_button.setText(d["queue"]); self.super_button.setText(d["super_button"])
         self.super_button.setToolTip(d["super_title"]); self.tools_button.setText(d["tools_menu"])
-        self.merge_button.setText(d["merge"]); self.report_button.setText(d["save_report"])
+        self.merge_button.setText(d["merge"]); self.vbmeta_action.setText(d["vbmeta_action"]); self.report_button.setText(d["save_report"])
         self.diagnostics_button.setText(d["diagnostics_button"])
         self.recent_label.setText(d["recent_short"]); self.language_label.setText(d["language"])
         self._rebuild_recents()
@@ -5338,6 +5502,10 @@ class MainWindow(QWidget):
     def _open_super(self) -> None:
         source = self.source_edit.text().strip()
         dialog = SuperImageDialog(self, source if source and Path(source).is_file() else "")
+        dialog.show()
+        self._keep_dialog(dialog)
+    def _open_vbmeta(self) -> None:
+        dialog = VBMetaInspectorDialog(self)
         dialog.show()
         self._keep_dialog(dialog)
     def _open_queue(self) -> None:

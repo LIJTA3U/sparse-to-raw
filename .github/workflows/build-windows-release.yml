@@ -97,7 +97,7 @@ jobs:
         run: >-
           python -m PyInstaller --noconfirm --clean --onefile
           --name sparse-to-raw --distpath dist/cli --workpath build/cli
-          --specpath build/spec/cli sparse_to_raw.py
+          --specpath build/spec/cli --hidden-import avb_inspector sparse_to_raw.py
 
       - name: Smoke-test packaged CLI
         shell: pwsh
@@ -116,6 +116,16 @@ jobs:
           & $cli --help | Out-Null
           if ($LASTEXITCODE -ne 0) {
             throw "Packaged CLI --help failed with exit code $LASTEXITCODE"
+          }
+
+          & $cli vbmeta-info --help | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged CLI vbmeta-info --help failed with exit code $LASTEXITCODE"
+          }
+
+          & $cli --lang ru vbmeta-info --help | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged CLI Russian vbmeta-info --help failed with exit code $LASTEXITCODE"
           }
 
       - name: Build GUI application folder

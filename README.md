@@ -26,10 +26,11 @@ A streaming Android Sparse Image v1 inspector and converter that expands Sparse 
 - Save and reload versioned JSON Batch Profiles for mixed Sparse → RAW, RAW → Sparse, and QFIL queues.
 - Export detailed JSON reports for conversions, output verification, validation, comparison, QFIL operations, and batch runs.
 - Analyze Qualcomm QFIL `rawprogram*.xml` / `patch*.xml`, resolve referenced firmware files, and assemble one RAW image per physical partition (`qfil-analyze`, `qfil-validate`, `qfil-build`). Full preflight validates RAW ranges and Sparse CRCs without creating outputs; patch instructions are reported but not replayed.
+- Inspect Android Verified Boot metadata with `vbmeta-info`: parse standalone VBMeta or AVB-footer images, review rollback indexes, flags, key fingerprints, hash/hashtree/chain/property descriptors, and check the embedded VBMeta digest. RSA signatures and key trust are not verified.
 - Inspect Android Dynamic Partitions metadata (`super-info`) and extract selected logical partitions from RAW/Sparse `super.img` (`super-extract`), including LP geometry and metadata SHA-256 checks and backup-metadata fallback.
 - Stream large images without loading the complete input or output into memory.
 - Use only the Python standard library for the CLI.
-- Provide a PySide6 GUI with a dedicated RAW → Sparse dialog and mixed batch-queue support, plus Russian/English language selection, saved preferences, recent files, logical RAW/Sparse comparison, image analysis, sequential batch conversion, visual ordered merging, optional output verification, a searchable Diagnostic Center, and a paged Sparse Structure Viewer with streaming CSV/JSON export, a Super Image dialog for partition inspection/extraction, and JSON reports.
+- Provide a PySide6 GUI with a dedicated RAW → Sparse dialog and mixed batch-queue support, plus Russian/English language selection, saved preferences, recent files, logical RAW/Sparse comparison, image analysis, sequential batch conversion, visual ordered merging, optional output verification, a searchable Diagnostic Center, and a paged Sparse Structure Viewer with streaming CSV/JSON export, a Super Image dialog for partition inspection/extraction, an AVB / VBMeta Inspector in the Tools menu, and JSON reports.
 
 `DONT_CARE` ranges are interpreted as zero bytes. The resulting logical RAW contents and size are correct; the filesystem may store zero ranges as sparse holes.
 
@@ -47,7 +48,7 @@ End users do not need to install Python to run the packaged Windows applications
 
 ## Windows GUI
 
-The v0.7.0 development branch uses a compact two-row toolbar: primary sections are grouped in the first row, common actions in the second, and less-frequent actions are in the Tools menu. The new Super Image dialog inspects Dynamic Partitions metadata and extracts selected partitions. See the [Super Image guide](docs/en/super-image.md).
+The v0.7.0 development branch uses a compact two-row toolbar: primary sections are grouped in the first row, common actions in the second, and less-frequent actions are in the Tools menu. The new Super Image dialog inspects Dynamic Partitions metadata and extracts selected partitions. The Tools menu also includes the read-only AVB / VBMeta Inspector. See the [Super Image guide](docs/en/super-image.md) and [AVB / VBMeta guide](docs/en/avb-vbmeta.md).
 
 The GUI uses a dark theme with an angular yellow frame and cyan accents. It supports drag-and-drop, progress statistics, an operation log, saved settings, recent input files, and speed display in decimal MB/s, binary MiB/s, or Mbit/s.
 
@@ -113,6 +114,7 @@ For Qualcomm manifests, see the [QFIL XML guide](docs/en/qfil-xml.md). For all C
 - [Installation](docs/en/installation.md)
 - [CLI guide](docs/en/cli-guide.md)
 - [Qualcomm QFIL XML support](docs/en/qfil-xml.md)
+- [AVB / VBMeta inspection](docs/en/avb-vbmeta.md)
 - [RAW output verification](docs/en/output-verification.md)
 - [GUI guide](docs/en/gui-guide.md)
 - [Task queue guide](docs/en/task-queue.md)

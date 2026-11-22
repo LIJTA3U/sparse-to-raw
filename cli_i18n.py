@@ -8,7 +8,7 @@ LANG = "en"
 TEXT = {
     "en": {
         "description": "Convert, validate and inspect Android Sparse images. The CLI uses only the Python standard library.",
-        "epilog": "Validate an Android Sparse image:\n  python sparse_to_raw.py validate image.sparse --json-report validation.json\n\nCompare logical images:\n  python sparse_to_raw.py compare image.raw image.sparse\n\nQFIL XML examples:\n  python sparse_to_raw.py qfil-analyze rawprogram0.xml --patch-xml patch0.xml\n  python sparse_to_raw.py qfil-validate rawprogram0.xml --search-dir firmware --output-dir raw\n  python sparse_to_raw.py qfil-build rawprogram0.xml --output-dir raw\n\nAndroid Super Image examples:\n  python sparse_to_raw.py super-info super.img --slot 0\n  python sparse_to_raw.py super-extract super.img --output-dir extracted --partition system\n\nExisting files are protected from overwrite by default; use --force to replace them.",
+        "epilog": "Validate an Android Sparse image:\n  python sparse_to_raw.py validate image.sparse --json-report validation.json\n\nCompare logical images:\n  python sparse_to_raw.py compare image.raw image.sparse\n\nQFIL XML examples:\n  python sparse_to_raw.py qfil-analyze rawprogram0.xml --patch-xml patch0.xml\n  python sparse_to_raw.py qfil-validate rawprogram0.xml --search-dir firmware --output-dir raw\n  python sparse_to_raw.py qfil-build rawprogram0.xml --output-dir raw\n\nAndroid Super Image examples:\n  python sparse_to_raw.py super-info super.img --slot 0\n  python sparse_to_raw.py super-extract super.img --output-dir extracted --partition system\n\nAVB / VBMeta example:\n  python sparse_to_raw.py vbmeta-info vbmeta.img --json-report vbmeta-report.json\n\nExisting files are protected from overwrite by default; use --force to replace them.",
         "input": "input Android Sparse image", "output_pos": "destination RAW image",
         "merge": "merge 2+ independent Sparse files in the supplied order (requires --output)",
         "output": "destination RAW file for --merge-parts", "info": "validate the image and display detailed information without conversion",
@@ -39,6 +39,9 @@ TEXT = {
         "super_output_dir": "directory for extracted partition images",
         "super_partition": "logical partition name to extract; repeat to select multiple (default: all)",
         "super_force": "allow replacing existing output/report files",
+        "avb_info_desc": "Read Android Verified Boot (AVB) metadata from vbmeta.img or an image with an AVB footer. RSA signature verification is not performed.",
+        "avb_input": "VBMeta image or partition image with an AVB footer",
+        "avb_json": "save a JSON report (existing files are not overwritten)",
         "validate_desc": "Validate Android Sparse structure and integrity without creating a RAW file",
         "validate_input": "Android Sparse image to validate",
         "validate_json": "write the validation report to JSON",
@@ -59,7 +62,7 @@ TEXT = {
     },
     "ru": {
         "description": "Конвертация, проверка и анализ Android Sparse. CLI использует только стандартную библиотеку Python.",
-        "epilog": "Проверка Android Sparse:\n  python sparse_to_raw.py validate image.sparse --json-report validation.json\n\nЛогическое сравнение образов:\n  python sparse_to_raw.py compare image.raw image.sparse\n\nПримеры QFIL XML:\n  python sparse_to_raw.py qfil-analyze rawprogram0.xml --patch-xml patch0.xml\n  python sparse_to_raw.py qfil-validate rawprogram0.xml --search-dir firmware --output-dir raw\n  python sparse_to_raw.py qfil-build rawprogram0.xml --output-dir raw\n\nПримеры Android Super Image:\n  python sparse_to_raw.py super-info super.img --slot 0\n  python sparse_to_raw.py super-extract super.img --output-dir extracted --partition system\n\nСуществующие файлы защищены от перезаписи; для замены используйте --force.",
+        "epilog": "Проверка Android Sparse:\n  python sparse_to_raw.py validate image.sparse --json-report validation.json\n\nЛогическое сравнение образов:\n  python sparse_to_raw.py compare image.raw image.sparse\n\nПримеры QFIL XML:\n  python sparse_to_raw.py qfil-analyze rawprogram0.xml --patch-xml patch0.xml\n  python sparse_to_raw.py qfil-validate rawprogram0.xml --search-dir firmware --output-dir raw\n  python sparse_to_raw.py qfil-build rawprogram0.xml --output-dir raw\n\nПримеры Android Super Image:\n  python sparse_to_raw.py super-info super.img --slot 0\n  python sparse_to_raw.py super-extract super.img --output-dir extracted --partition system\n\nАнализ AVB / VBMeta:\n  python sparse_to_raw.py vbmeta-info vbmeta.img --json-report vbmeta-report.json\n\nСуществующие файлы защищены от перезаписи; для замены используйте --force.",
         "input": "исходный Android Sparse Image", "output_pos": "путь к выходному RAW-образу",
         "merge": "объединить 2+ самостоятельных Sparse-файла в указанном порядке (нужен --output)",
         "output": "выходной RAW-файл для --merge-parts", "info": "проверить образ и вывести подробную информацию без конвертации",
@@ -90,6 +93,9 @@ TEXT = {
         "super_output_dir": "каталог для извлечённых образов разделов",
         "super_partition": "имя логического раздела для извлечения; повторите параметр для выбора нескольких (по умолчанию: все)",
         "super_force": "разрешить замену существующих выходных файлов и отчётов",
+        "avb_info_desc": "Прочитать метаданные Android Verified Boot (AVB) из vbmeta.img или образа с AVB footer. Проверка RSA-подписи не выполняется.",
+        "avb_input": "VBMeta-образ или раздел с AVB footer",
+        "avb_json": "сохранить отчёт в JSON (существующий файл не перезаписывается)",
         "validate_desc": "Проверить структуру и целостность Android Sparse без создания RAW-файла",
         "validate_input": "Android Sparse-образ для проверки",
         "validate_json": "сохранить отчёт проверки в JSON",

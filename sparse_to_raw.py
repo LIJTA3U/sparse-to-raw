@@ -1929,6 +1929,9 @@ def main(argv: list[str] | None = None) -> int:
     if arguments and arguments[0] in {"super-info", "super-extract"}:
         from super_image import run_super_cli
         return run_super_cli(arguments[0], arguments[1:])
+    if arguments and arguments[0] == "vbmeta-info":
+        from avb_inspector import run_vbmeta_cli
+        return run_vbmeta_cli(arguments[1:])
     if arguments and arguments[0] == "validate":
         from sparse_validator import validate_sparse
         command = argparse.ArgumentParser(

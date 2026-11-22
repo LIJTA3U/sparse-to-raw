@@ -1,6 +1,8 @@
 ## [Unreleased] — v0.7.0 development
 
 ### Added
+- Added the read-only `vbmeta-info` CLI command and AVB / VBMeta Inspector in the GUI Tools menu. It parses standalone VBMeta and AVB-footer images, header flags, rollback metadata, public-key fingerprints, and supported Property, Hash, Hashtree, Kernel Cmdline, and Chain Partition descriptors.
+- Added bounded parsing, block-overlap checks, and embedded SHA-256 / SHA-512 digest comparison for supported AVB algorithms. RSA signature verification, trusted-key validation, and device rollback-state comparison are intentionally not performed.
 - Added `qfil-validate` for a complete no-output QFIL preflight: source-range checks, full streaming validation of referenced Sparse files and CRCs, per-LUN output planning, collision checks, and available-space checks.
 - Added QFIL GUI controls for per-LUN disk sector counts and a background **Validate package** action with progress reporting before RAW assembly.
 - Android Super Image inspection and extraction for RAW and Android Sparse inputs: LP geometry/metadata checksum validation, primary/backup metadata fallback, slot selection, partition/group/extent listing, and extraction of selected logical partitions.

@@ -201,3 +201,18 @@ py sparse_to_raw.py super-extract super.img --output-dir extracted --partition s
 ```
 
 Repeat `--partition` to select multiple entries; all partitions are extracted when it is omitted. `--slot` defaults to `0`. RAW and Android Sparse inputs use the same interface; Sparse is expanded to temporary RAW. Use `--force` to replace existing output files and JSON reports. The current implementation supports LP metadata 10.0–10.2 and extraction from block device index 0 only.
+
+
+## Inspect Android Verified Boot metadata
+
+Use `vbmeta-info` to inspect a standalone `vbmeta.img` or a partition image that has an AVB footer:
+
+```powershell
+py sparse_to_raw.py vbmeta-info vbmeta.img
+py sparse_to_raw.py vbmeta-info system.img --json-report system-vbmeta.json
+py sparse_to_raw.py --lang ru vbmeta-info vbmeta.img
+```
+
+The report includes the required libavb version, algorithm, rollback index and location, header flags, release string, public-key dimensions and fingerprints, and supported Property, Hash, Hashtree, Kernel Cmdline, and Chain Partition descriptors. When the algorithm is supported, the inspector calculates and compares the embedded VBMeta digest over the header and auxiliary block. A mismatch is reported in the JSON/text report rather than being treated as a verified signature.
+
+**Security limitation:** this command does not verify the RSA signature, compare the public key with a trusted key or device trust store, or compare the rollback index with the value stored on a device. A matching embedded digest alone does not establish authenticity or trust. The command is read-only and does not modify the input image.
