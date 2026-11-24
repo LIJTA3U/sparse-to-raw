@@ -33,6 +33,8 @@ from sparse_to_raw_gui import (  # noqa: E402
     SparseValidatorWorker,
     SuperImageDialog,
     VBMetaInspectorDialog,
+    BootImageInspectorDialog,
+    RamdiskInspectorDialog,
     QFILDialog,
     RawToSparseDialog,
     DiagnosticCenterDialog,
@@ -227,6 +229,320 @@ class SparseToRawGuiTests(unittest.TestCase):
             dialog.close()
             window.close()
 
+    def test_boot_image_inspector_is_available_from_tools_menu(self) -> None:
+        window = MainWindow()
+        dialog = BootImageInspectorDialog(window)
+        try:
+            self.assertEqual(window.boot_action.text(), window.t("boot_action"))
+            self.assertFalse(window.boot_action.icon().isNull())
+            self.assertEqual(dialog.inspect_button.text(), window.t("boot_inspect"))
+            self.assertEqual(dialog.table.columnCount(), 4)
+            self.assertFalse(dialog.export_button.isEnabled())
+            self.assertIsNone(dialog.report)
+        finally:
+            dialog.close()
+            window.close()
+
+    def test_boot_image_inspector_shows_kernel_format_and_both_vbmeta_data_ranges(self) -> None:
+        report = {
+            "input": "blackview-boot.img",
+            "image_type": "ANDROID_BOOT",
+            "header_version_name": "v2",
+            "page_size_bytes": 2048,
+            "sections": [
+                {
+                    "name": "kernel", "offset_bytes": 2048, "size_bytes": 9361870,
+                    "present": True, "detected_format": "gzip-compressed kernel payload",
+                },
+                {
+                    "name": "ramdisk", "offset_bytes": 9365504, "size_bytes": 795220,
+                    "present": True, "detected_format": "gzip",
+                },
+            ],
+            "trailing_region": {
+                "offset_bytes": 10262572,
+                "size_bytes": 23291860,
+                "footer_offset_bytes": 33554368,
+                "unclassified_before_vbmeta_bytes": 2004,
+                "vbmeta": {
+                    "offset_bytes": 10264576, "size_bytes": 1472,
+                    "end_bytes": 10266048, "header_magic": "AVB0", "header_present": True,
+                },
+                "unclassified_after_vbmeta_bytes": 23288320,
+            },
+            "avb_footer": {
+                "magic": "AVBf", "offset_bytes": 33554368, "size_bytes": 64,
+                "version_major": 1, "version_minor": 0,
+                "structural_status": "valid", "signature_verified": False,
+            },
+            "warnings": [],
+        }
+        for language in ("ru", "en"):
+            window = MainWindow()
+            window.language = language
+            dialog = BootImageInspectorDialog(window)
+            try:
+                dialog.source_edit.setText("blackview-boot.img")
+                with patch("sparse_to_raw_gui.inspect_boot_image", return_value=report):
+                    dialog._inspect()
+                labels = [dialog.table.item(row, 0).text() for row in range(dialog.table.rowCount())]
+                formats = [dialog.table.item(row, 3).text() for row in range(dialog.table.rowCount())]
+                expected_kernel = window.t("boot_row_kernel_compressed").format(format="GZIP")
+                self.assertIn(expected_kernel, labels)
+                self.assertTrue(any("GZIP" in value for value in formats))
+                self.assertIn(window.t("boot_row_unclassified_before_vbmeta"), labels)
+                self.assertIn(window.t("boot_row_unclassified_after_vbmeta"), labels)
+                self.assertIn(window.t("boot_row_avb_footer"), labels)
+                sizes_by_label = {
+                    dialog.table.item(row, 0).text(): dialog.table.item(row, 2).text()
+                    for row in range(dialog.table.rowCount())
+                }
+                self.assertEqual(
+                    sizes_by_label[window.t("boot_row_unclassified_before_vbmeta")], "2,004 B"
+                )
+                self.assertEqual(
+                    sizes_by_label[window.t("boot_row_unclassified_after_vbmeta")], "23,288,320 B"
+                )
+            finally:
+                dialog.close()
+                window.close()
+
+
+    def test_ramdisk_inspector_is_available_from_tools_menu(self) -> None:
+        window = MainWindow()
+        dialog = RamdiskInspectorDialog(window)
+        try:
+            self.assertEqual(window.ramdisk_action.text(), window.t("ramdisk_action"))
+            self.assertFalse(window.ramdisk_action.icon().isNull())
+            self.assertEqual(dialog.inspect_button.text(), window.t("ramdisk_inspect"))
+            self.assertEqual(dialog.table.columnCount(), 7)
+            self.assertFalse(dialog.export_button.isEnabled())
+            self.assertFalse(dialog.extract_all_button.isEnabled())
+            self.assertIsNone(dialog.report)
+        finally:
+            dialog.close()
+            window.close()
+
+    def test_ramdisk_inspector_search_and_category_filters(self) -> None:
+        window = MainWindow()
+        dialog = RamdiskInspectorDialog(window)
+        report = {
+            "operation": "android-ramdisk-inspect", "input": "ramdisk.cpio.gz",
+            "compression_format": "gzip", "cpio_formats": ["newc"],
+            "archive_count": 1, "entry_count": 4, "file_count": 2,
+            "directory_count": 1, "symlink_count": 1, "entries": [
+                {"path": "init", "type": "file", "size_bytes": 40, "uid": 0, "gid": 0,
+                 "mode": 0o100755, "permissions_octal": "0755", "checksum_status": "not-present"},
+                {"path": "etc/fstab", "type": "file", "size_bytes": 80, "uid": 1000, "gid": 1000,
+                 "mode": 0o100644, "permissions_octal": "0644", "checksum_status": "not-present"},
+                {"path": "etc", "type": "directory", "size_bytes": 0,
+                 "mode": 0o040755, "permissions_octal": "0755", "checksum_status": "not-present"},
+                {"path": "sbin/tool", "type": "symlink", "size_bytes": 12,
+                 "mode": 0o120777, "permissions_octal": "0777", "checksum_status": "not-present"},
+            ],
+        }
+        try:
+            dialog._populate_report(report)
+            rows = {dialog.table.item(row, 0).text(): row for row in range(dialog.table.rowCount())}
+            self.assertEqual(dialog.table.item(rows["etc/fstab"], 4).text(), "1000")
+            self.assertEqual(dialog.table.item(rows["etc/fstab"], 5).text(), "1000")
+
+            dialog.filter_combo.setCurrentIndex(dialog.filter_combo.findData("config"))
+            self.assertFalse(dialog.table.isRowHidden(rows["etc/fstab"]))
+            self.assertTrue(dialog.table.isRowHidden(rows["init"]))
+            self.assertTrue(dialog.table.isRowHidden(rows["etc"]))
+            self.assertIn("1", dialog.visible_count_label.text())
+
+            dialog.filter_combo.setCurrentIndex(dialog.filter_combo.findData("executable"))
+            self.assertFalse(dialog.table.isRowHidden(rows["init"]))
+            self.assertTrue(dialog.table.isRowHidden(rows["etc/fstab"]))
+
+            dialog.filter_combo.setCurrentIndex(dialog.filter_combo.findData("all"))
+            dialog.search_edit.setText("fstab")
+            self.assertFalse(dialog.table.isRowHidden(rows["etc/fstab"]))
+            self.assertTrue(dialog.table.isRowHidden(rows["init"]))
+        finally:
+            dialog.close()
+            window.close()
+
+    def test_ramdisk_preview_selected_file_starts_preview_worker(self) -> None:
+        window = MainWindow()
+        dialog = RamdiskInspectorDialog(window)
+        report = {
+            "operation": "android-ramdisk-inspect", "input": "ramdisk.cpio.gz",
+            "compression_format": "gzip", "cpio_formats": ["newc"],
+            "archive_count": 1, "entry_count": 1, "file_count": 1,
+            "directory_count": 0, "symlink_count": 0, "entries": [
+                {"path": "etc/fstab", "type": "file", "size_bytes": 32,
+                 "mode": 0o100644, "permissions_octal": "0644", "checksum_status": "not-present"},
+            ],
+        }
+        try:
+            dialog._populate_report(report)
+            dialog.table.selectRow(0)
+            self.assertTrue(dialog.preview_button.isEnabled())
+            with patch.object(dialog, "_start_worker") as start_worker:
+                dialog._preview_selected()
+                start_worker.assert_called_once_with("preview", selected_path="etc/fstab")
+        finally:
+            dialog.close()
+            window.close()
+
+    def test_ramdisk_selected_extraction_uses_selected_visible_paths(self) -> None:
+        window = MainWindow()
+        dialog = RamdiskInspectorDialog(window)
+        report = {
+            "operation": "android-ramdisk-inspect", "input": "ramdisk.cpio.gz",
+            "compression_format": "gzip", "cpio_formats": ["newc"],
+            "archive_count": 1, "entry_count": 2, "file_count": 1,
+            "directory_count": 1, "symlink_count": 0, "entries": [
+                {"path": "etc", "type": "directory", "size_bytes": 0,
+                 "mode": 0o040755, "permissions_octal": "0755", "checksum_status": "not-present"},
+                {"path": "etc/fstab", "type": "file", "size_bytes": 32,
+                 "mode": 0o100644, "permissions_octal": "0644", "checksum_status": "not-present"},
+            ],
+        }
+        try:
+            dialog._populate_report(report)
+            dialog.table.selectRow(0)
+            with patch.object(dialog, "_extract_to") as extract_to:
+                dialog._extract_selected()
+                extract_to.assert_called_once_with({"etc"})
+        finally:
+            dialog.close()
+            window.close()
+
+    def test_ramdisk_preview_result_is_shown_in_preview_tab(self) -> None:
+        window = MainWindow()
+        dialog = RamdiskInspectorDialog(window)
+        try:
+            dialog._active_action = "preview"
+            previous_result = {"keep": "the inspection report"}
+            window.last_result = previous_result
+            dialog._worker_succeeded({
+                "operation": "android-ramdisk-preview", "path": "etc/fstab",
+                "size_bytes": 24, "is_text": True, "encoding": "utf-8",
+                "text_preview": "mount /dev/block/test / ext4\n",
+                "truncated": False,
+            })
+            self.assertEqual(dialog.preview_edit.toPlainText(), "mount /dev/block/test / ext4\n")
+            self.assertIs(dialog.details_tabs.currentWidget(), dialog.preview_page)
+            self.assertIs(window.last_result, previous_result)
+        finally:
+            dialog.close()
+            window.close()
+
+    def test_ramdisk_menu_action_opens_and_retains_dialog(self) -> None:
+        window = MainWindow()
+        try:
+            with patch("sparse_to_raw_gui.RamdiskInspectorDialog") as dialog_class:
+                dialog = dialog_class.return_value
+                window.ramdisk_action.trigger()
+                dialog_class.assert_called_once_with(window, "")
+                dialog.setAttribute.assert_called_once_with(
+                    Qt.WidgetAttribute.WA_DeleteOnClose, True
+                )
+                dialog.show.assert_called_once_with()
+                dialog.raise_.assert_called_once_with()
+                dialog.activateWindow.assert_called_once_with()
+                self.assertIn(dialog, window._dialogs)
+        finally:
+            window.close()
+
+    def test_ramdisk_menu_action_reports_dialog_construction_error(self) -> None:
+        window = MainWindow()
+        try:
+            with patch(
+                "sparse_to_raw_gui.RamdiskInspectorDialog",
+                side_effect=RuntimeError("synthetic dialog construction failure"),
+            ), patch("sparse_to_raw_gui.QMessageBox.critical") as critical:
+                window.ramdisk_action.trigger()
+                critical.assert_called_once()
+                self.assertIn("synthetic dialog construction failure", critical.call_args.args[2])
+        finally:
+            window.close()
+
+    def test_ramdisk_inspect_button_starts_background_inspection(self) -> None:
+        window = MainWindow()
+        dialog = RamdiskInspectorDialog(window)
+        try:
+            with patch.object(dialog, "_start_worker") as start_worker:
+                dialog.inspect_button.click()
+                start_worker.assert_called_once_with("inspect")
+        finally:
+            dialog.close()
+            window.close()
+
+    def test_ramdisk_inspector_populates_entry_inventory(self) -> None:
+        window = MainWindow()
+        dialog = RamdiskInspectorDialog(window)
+        report = {
+            "operation": "android-ramdisk-inspect", "input": "ramdisk.cpio.gz",
+            "compression_format": "gzip", "cpio_formats": ["newc"],
+            "archive_count": 1, "entry_count": 2, "file_count": 1,
+            "directory_count": 1, "symlink_count": 0, "entries": [
+                {"path": "init", "type": "file", "size_bytes": 512,
+                 "permissions_octal": "0755", "checksum_status": "not-present"},
+                {"path": "etc", "type": "directory", "size_bytes": 0,
+                 "permissions_octal": "0755", "checksum_status": "not-present"},
+            ],
+        }
+        try:
+            dialog._populate_report(report)
+            self.assertIs(dialog.report, report)
+            self.assertEqual(dialog.table.rowCount(), 2)
+            self.assertEqual(dialog.table.item(0, 0).text(), "init")
+            self.assertEqual(dialog.table.item(1, 1).text(), "directory")
+            self.assertTrue(dialog.extract_all_button.isEnabled())
+            self.assertIn("gzip", dialog.summary.text())
+        finally:
+            dialog.close()
+            window.close()
+
+
+    def test_ramdisk_source_change_invalidates_inventory(self) -> None:
+        window = MainWindow()
+        dialog = RamdiskInspectorDialog(window)
+        report = {
+            "operation": "android-ramdisk-inspect", "input": "one.cpio.gz",
+            "compression_format": "gzip", "cpio_formats": ["newc"],
+            "archive_count": 1, "entry_count": 1, "file_count": 1,
+            "directory_count": 0, "symlink_count": 0,
+            "entries": [{"path": "init", "type": "file", "size_bytes": 1,
+                         "permissions_octal": "0755", "checksum_status": "not-present"}],
+        }
+        try:
+            dialog._populate_report(report)
+            dialog.report = report
+            window.last_result = report
+            window.report_button.setEnabled(True)
+            self.assertTrue(dialog.extract_all_button.isEnabled())
+            dialog.source_edit.setText("two.cpio.gz")
+            self.assertIsNone(dialog.report)
+            self.assertEqual(dialog.table.rowCount(), 0)
+            self.assertFalse(dialog.extract_all_button.isEnabled())
+            self.assertFalse(window.report_button.isEnabled())
+        finally:
+            dialog.close()
+            window.close()
+
+    def test_ramdisk_cancel_button_requests_worker_cancellation(self) -> None:
+        window = MainWindow()
+        dialog = RamdiskInspectorDialog(window)
+        calls = []
+        dialog.worker = SimpleNamespace(request_cancel=lambda: calls.append(True))
+        dialog.thread = SimpleNamespace(isRunning=lambda: True)
+        try:
+            dialog._cancel_operation()
+            self.assertEqual(calls, [True])
+            self.assertFalse(dialog.cancel_button.isEnabled())
+            self.assertEqual(dialog.summary.text(), window.t("ramdisk_cancelling"))
+        finally:
+            dialog.thread = None
+            dialog.worker = None
+            dialog.close()
+            window.close()
+
     def test_main_window_sets_application_icon_and_keeps_smooth_custom_frame(self) -> None:
         window = MainWindow()
         try:
@@ -258,8 +574,11 @@ class SparseToRawGuiTests(unittest.TestCase):
                               window.compare_button, window.tools_button]
             self.assertTrue(all(button.isVisible() for button in top_buttons + bottom_buttons))
             self.assertTrue(all(not button.icon().isNull() for button in top_buttons + bottom_buttons))
-            self.assertEqual(len(window.tools_menu.actions()), 5)
-            self.assertTrue(all(not action.icon().isNull() for action in window.tools_menu.actions() if not action.isSeparator()))
+            menu_actions = window.tools_menu.actions()
+            # QAction list includes the visual separator as an action object.
+            self.assertEqual(sum(not action.isSeparator() for action in menu_actions), 6)
+            self.assertEqual(sum(action.isSeparator() for action in menu_actions), 1)
+            self.assertTrue(all(not action.icon().isNull() for action in menu_actions if not action.isSeparator()))
             self.assertTrue(window.merge_button.isEnabled())
             self.assertLess(max(button.geometry().bottom() for button in top_buttons),
                             min(button.geometry().top() for button in bottom_buttons))

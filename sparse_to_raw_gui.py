@@ -39,13 +39,15 @@ from sparse_validator import validate_sparse
 from batch_profiles import BatchProfileError, load_batch_profile, save_batch_profile
 from super_image import inspect_super_image, extract_super_partitions, SuperImageCancelled
 from avb_inspector import inspect_vbmeta_image
+from boot_inspector import inspect_boot_image
+from ramdisk_inspector import inspect_ramdisk, extract_ramdisk, read_ramdisk_file
 
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
     QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMessageBox, QProgressBar, QPushButton, QSizePolicy, QTableWidget,
     QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget, QAbstractItemView,
-    QDialogButtonBox, QFormLayout, QInputDialog, QStyle, QSpinBox, QMenu,
+    QDialogButtonBox, QFormLayout, QInputDialog, QStyle, QSpinBox, QMenu, QTabWidget,
 )
 
 from sparse_to_raw import (
@@ -117,6 +119,65 @@ I18N: dict[str, dict[str, str]] = {
         "vbmeta_col_type": "Тип", "vbmeta_col_partition": "Раздел / ключ", "vbmeta_col_details": "Сведения",
         "vbmeta_signature_note": "Важно: встроенный хеш проверяется, но RSA-подпись и доверие к ключу не проверяются. Rollback index не сравнивается с состоянием устройства.",
         "vbmeta_close": "Закрыть", "vbmeta_no_descriptors": "В образе нет descriptors.",
+        "boot_action": "Boot Image Inspector", "boot_title": "Анализ Android Boot Image",
+        "boot_source": "Файл boot / init_boot / recovery / vendor_boot", "boot_pick": "Выберите загрузочный образ…",
+        "boot_inspect": "Прочитать структуру", "boot_ready": "Выберите Android boot.img или vendor_boot.img.",
+        "boot_summary": "Тип: {kind} · заголовок: {version} · page: {page} байт · компонентов: {count} · AVB footer: {footer}",
+        "boot_col_name": "Компонент", "boot_col_offset": "Смещение", "boot_col_size": "Размер",
+        "boot_col_format": "Формат / сведения", "boot_details": "Подробности",
+        "boot_footer_missing": "не обнаружен", "boot_footer_valid": "обнаружен, структура корректна",
+        "boot_footer_warning": "обнаружен, есть замечания", "boot_footer_invalid": "обнаружен, структура некорректна",
+        "boot_footer_state_valid": "корректно", "boot_footer_state_warning": "есть замечания",
+        "boot_footer_state_invalid": "некорректно",
+        "boot_row_avb_footer": "AVB footer", "boot_row_vbmeta": "VBMeta block",
+        "boot_row_kernel_compressed": "Ядро ({format})",
+        "boot_row_unclassified_before_vbmeta": "Неразобранные данные перед VBMeta",
+        "boot_row_unclassified_after_vbmeta": "Неразобранные данные после VBMeta",
+        "boot_format_unclassified_region": "Неинтерпретированный диапазон данных",
+        "boot_row_unclassified": "Неразобранные данные", "boot_row_padding": "Данные после VBMeta до footer",
+        "boot_format_unclassified_before_vbmeta": "Неинтерпретированные байты перед VBMeta",
+        "boot_format_unclassified_after_vbmeta": "Неинтерпретированные байты после VBMeta и перед footer",
+        "boot_format_unclassified_before_footer": "Неинтерпретированные байты перед footer",
+        "boot_format_unclassified_trailing": "Неинтерпретированные завершающие данные",
+        "boot_format_footer": "AVB footer v{version} · {status}",
+        "boot_format_vbmeta": "Заголовок AVB0 обнаружен", "boot_format_vbmeta_unknown": "Заголовок AVB0 не подтверждён",
+        "boot_export": "Экспорт JSON…", "boot_close": "Закрыть",
+        "boot_report_collision": "Путь отчёта должен отличаться от входного файла.",
+        "boot_replace_report": "Заменить существующий отчёт?",
+        "boot_report_saved": "Отчёт сохранён:\n{path}",
+        "ramdisk_action": "Ramdisk Inspector", "ramdisk_title": "Анализ Android Ramdisk / CPIO",
+        "ramdisk_source": "Загрузочный образ или архив ramdisk", "ramdisk_pick": "Выберите boot.img или ramdisk…",
+        "ramdisk_fragment_check": "Выбрать фрагмент vendor_boot v4", "ramdisk_fragment_index": "Индекс фрагмента (с нуля)",
+        "ramdisk_limit_label": "Лимит распаковки (МиБ)", "ramdisk_inspect": "Просмотреть содержимое",
+        "ramdisk_extract_selected": "Извлечь выбранное", "ramdisk_extract_all": "Извлечь всё",
+        "ramdisk_cancel": "Отменить операцию", "ramdisk_cancelling": "Отмена операции…",
+        "ramdisk_export": "Экспорт JSON…", "ramdisk_output": "Выберите папку для извлечения",
+        "ramdisk_close": "Закрыть",
+        "ramdisk_ready": "Выберите boot.img, vendor_boot.img или отдельный архив CPIO.",
+        "ramdisk_col_path": "Путь", "ramdisk_col_type": "Тип", "ramdisk_col_size": "Размер",
+        "ramdisk_col_mode": "Режим", "ramdisk_col_uid": "UID", "ramdisk_col_gid": "GID",
+        "ramdisk_col_crc": "CRC",
+        "ramdisk_summary": "Сжатие: {compression} · CPIO: {cpio} · Файлов: {files} · Каталогов: {dirs} · Ссылок: {links} · Архивов: {archives}",
+        "ramdisk_search_label": "Поиск", "ramdisk_search_placeholder": "Имя или путь файла…",
+        "ramdisk_filter_label": "Фильтр", "ramdisk_filter_all": "Все записи",
+        "ramdisk_filter_files": "Файлы", "ramdisk_filter_directories": "Каталоги",
+        "ramdisk_filter_symlinks": "Символические ссылки", "ramdisk_filter_executables": "Исполняемые файлы",
+        "ramdisk_filter_configs": "Конфигурации",
+        "ramdisk_visible_count": "Показано: {visible} из {total}",
+        "ramdisk_tab_details": "Сведения", "ramdisk_tab_preview": "Предпросмотр",
+        "ramdisk_preview_button": "Просмотр текста",
+        "ramdisk_preview_select": "Выбери обычный файл для предпросмотра.",
+        "ramdisk_preview_binary": "Файл не похож на текстовый. Ниже показаны первые байты в HEX.",
+        "ramdisk_preview_text_meta": "{path} · {size} байт · {encoding}{truncated}",
+        "ramdisk_preview_truncated": " · показана только начальная часть файла",
+        "ramdisk_preview_empty": "Файл пуст.", "ramdisk_preview_done": "Предпросмотр: {path}",
+        "ramdisk_busy": "Операция Ramdisk выполняется…", "ramdisk_select_paths": "Выбери одну или несколько строк для извлечения.",
+        "ramdisk_extract_done": "Извлечение завершено.\nФайлов: {files}\nКаталогов: {dirs}\nСсылок в манифесте: {links}\nКаталог: {path}",
+        "ramdisk_export_saved": "Отчёт Ramdisk сохранён:\n{path}",
+        "ramdisk_error": "Операция Ramdisk не выполнена.", "ramdisk_cancelled": "Операция Ramdisk отменена.",
+        "ramdisk_symlink_note": "Символические ссылки записываются в SYMLINKS.txt, но не создаются как ссылки. Специальные файлы перечисляются в SPECIAL_FILES.txt.",
+        "boot_warning": "Просмотрщик только читает метаданные и не распаковывает/не изменяет компоненты.",
+        "boot_role_note": "Имя раздела (boot, recovery или init_boot) не всегда можно доказать по одному заголовку.",
         "super_source": "Исходный super-образ (RAW или Sparse)", "super_source_pick": "Выберите super.img…",
         "super_slot": "Слот метаданных", "super_analyze": "Прочитать структуру", "super_select_all": "Выбрать все",
         "super_select_none": "Снять выбор", "super_output": "Папка для извлечённых разделов",
@@ -336,6 +397,65 @@ I18N: dict[str, dict[str, str]] = {
         "vbmeta_col_type": "Type", "vbmeta_col_partition": "Partition / key", "vbmeta_col_details": "Details",
         "vbmeta_signature_note": "Important: the embedded hash is checked, but the RSA signature and key trust are not verified. The rollback index is not compared with device state.",
         "vbmeta_close": "Close", "vbmeta_no_descriptors": "The image contains no descriptors.",
+        "boot_action": "Boot Image Inspector", "boot_title": "Android Boot Image Inspector",
+        "boot_source": "boot / init_boot / recovery / vendor_boot image", "boot_pick": "Select a boot image…",
+        "boot_inspect": "Inspect structure", "boot_ready": "Choose an Android boot.img or vendor_boot.img.",
+        "boot_summary": "Type: {kind} · header: {version} · page: {page} bytes · components: {count} · AVB footer: {footer}",
+        "boot_col_name": "Component", "boot_col_offset": "Offset", "boot_col_size": "Size",
+        "boot_col_format": "Format / details", "boot_details": "Details",
+        "boot_footer_missing": "not detected", "boot_footer_valid": "detected, structure valid",
+        "boot_footer_warning": "detected, with warnings", "boot_footer_invalid": "detected, structure invalid",
+        "boot_footer_state_valid": "valid", "boot_footer_state_warning": "with warnings",
+        "boot_footer_state_invalid": "invalid",
+        "boot_row_avb_footer": "AVB footer", "boot_row_vbmeta": "VBMeta block",
+        "boot_row_kernel_compressed": "Kernel ({format})",
+        "boot_row_unclassified_before_vbmeta": "Unclassified data before VBMeta",
+        "boot_row_unclassified_after_vbmeta": "Unclassified data after VBMeta",
+        "boot_format_unclassified_region": "Unclassified data region",
+        "boot_row_unclassified": "Unparsed trailing data", "boot_row_padding": "Data after VBMeta before footer",
+        "boot_format_unclassified_before_vbmeta": "Unclassified bytes before VBMeta",
+        "boot_format_unclassified_after_vbmeta": "Unclassified bytes after VBMeta and before the footer",
+        "boot_format_unclassified_before_footer": "Unclassified bytes before footer",
+        "boot_format_unclassified_trailing": "Unclassified trailing data",
+        "boot_format_footer": "AVB footer v{version} · {status}",
+        "boot_format_vbmeta": "AVB0 header detected", "boot_format_vbmeta_unknown": "AVB0 header not confirmed",
+        "boot_export": "Export JSON…", "boot_close": "Close",
+        "boot_report_collision": "The report path must differ from the input image.",
+        "boot_replace_report": "Replace the existing report?",
+        "boot_report_saved": "Report saved:\n{path}",
+        "ramdisk_action": "Ramdisk Inspector", "ramdisk_title": "Android Ramdisk / CPIO Inspector",
+        "ramdisk_source": "Boot image or ramdisk archive", "ramdisk_pick": "Select boot.img or ramdisk…",
+        "ramdisk_fragment_check": "Select vendor_boot v4 fragment", "ramdisk_fragment_index": "Fragment index (zero-based)",
+        "ramdisk_limit_label": "Decompression limit (MiB)", "ramdisk_inspect": "Inspect contents",
+        "ramdisk_extract_selected": "Extract selected", "ramdisk_extract_all": "Extract all",
+        "ramdisk_cancel": "Cancel operation", "ramdisk_cancelling": "Cancelling operation…",
+        "ramdisk_export": "Export JSON…", "ramdisk_output": "Select extraction folder",
+        "ramdisk_close": "Close",
+        "ramdisk_ready": "Select boot.img, vendor_boot.img or a standalone CPIO archive.",
+        "ramdisk_col_path": "Path", "ramdisk_col_type": "Type", "ramdisk_col_size": "Size",
+        "ramdisk_col_mode": "Mode", "ramdisk_col_uid": "UID", "ramdisk_col_gid": "GID",
+        "ramdisk_col_crc": "CRC",
+        "ramdisk_summary": "Compression: {compression} · CPIO: {cpio} · Files: {files} · Directories: {dirs} · Symlinks: {links} · Archives: {archives}",
+        "ramdisk_search_label": "Search", "ramdisk_search_placeholder": "File name or path…",
+        "ramdisk_filter_label": "Filter", "ramdisk_filter_all": "All entries",
+        "ramdisk_filter_files": "Files", "ramdisk_filter_directories": "Directories",
+        "ramdisk_filter_symlinks": "Symlinks", "ramdisk_filter_executables": "Executables",
+        "ramdisk_filter_configs": "Configuration files",
+        "ramdisk_visible_count": "Showing: {visible} of {total}",
+        "ramdisk_tab_details": "Details", "ramdisk_tab_preview": "Preview",
+        "ramdisk_preview_button": "Preview text",
+        "ramdisk_preview_select": "Select a regular file to preview.",
+        "ramdisk_preview_binary": "This does not appear to be a text file. A HEX preview is shown below.",
+        "ramdisk_preview_text_meta": "{path} · {size} bytes · {encoding}{truncated}",
+        "ramdisk_preview_truncated": " · only the beginning of the file is shown",
+        "ramdisk_preview_empty": "The file is empty.", "ramdisk_preview_done": "Preview: {path}",
+        "ramdisk_busy": "Ramdisk operation is running…", "ramdisk_select_paths": "Select one or more rows to extract.",
+        "ramdisk_extract_done": "Extraction completed.\nFiles: {files}\nDirectories: {dirs}\nLinks in manifest: {links}\nDirectory: {path}",
+        "ramdisk_export_saved": "Ramdisk report saved:\n{path}",
+        "ramdisk_error": "Ramdisk operation failed.", "ramdisk_cancelled": "Ramdisk operation cancelled.",
+        "ramdisk_symlink_note": "Symlinks are listed in SYMLINKS.txt but are not created as links. Special files are listed in SPECIAL_FILES.txt.",
+        "boot_warning": "This inspector reads metadata only; it does not unpack or modify image components.",
+        "boot_role_note": "The partition role (boot, recovery or init_boot) cannot always be proven from the header alone.",
         "super_source": "Source super image (RAW or Sparse)", "super_source_pick": "Select super.img…",
         "super_slot": "Metadata slot", "super_analyze": "Read structure", "super_select_all": "Select all",
         "super_select_none": "Clear selection", "super_output": "Output folder for extracted partitions",
@@ -3201,6 +3321,838 @@ class VBMetaInspectorDialog(QDialog):
         self.details.setPlainText(json.dumps(descriptor, ensure_ascii=False, indent=2))
 
 
+class BootImageInspectorDialog(QDialog):
+    """Read-only viewer for Android boot and vendor_boot image metadata."""
+
+    def __init__(self, parent: "MainWindow") -> None:
+        super().__init__(parent)
+        self.main = parent
+        self.report: dict[str, Any] | None = None
+        self.setWindowTitle(parent.t("boot_title"))
+        self.resize(1040, 740)
+        self.setMinimumSize(820, 580)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 14, 16, 14)
+        root.setSpacing(9)
+
+        note = QLabel(parent.t("boot_warning") + "\n" + parent.t("boot_role_note"))
+        note.setWordWrap(True)
+        note.setStyleSheet(
+            f"color:{COLORS['yellow_light']}; background:{COLORS['panel_alt']}; "
+            f"border:1px solid {COLORS['border']}; padding:8px;"
+        )
+        root.addWidget(note)
+
+        source_label = QLabel(parent.t("boot_source"))
+        source_label.setObjectName("fieldLabel")
+        root.addWidget(source_label)
+        path_row = QHBoxLayout()
+        self.source_edit = QLineEdit()
+        self.source_edit.setPlaceholderText(parent.t("boot_pick"))
+        path_row.addWidget(self.source_edit, 1)
+        self.browse_button = QPushButton(parent.t("browse"))
+        self.browse_button.setIcon(parent.icon_for("SP_DialogOpenButton"))
+        self.browse_button.clicked.connect(self._browse)
+        path_row.addWidget(self.browse_button)
+        self.inspect_button = QPushButton(parent.t("boot_inspect"))
+        self.inspect_button.setIcon(parent.icon_for("SP_FileDialogDetailedView"))
+        self.inspect_button.clicked.connect(self._inspect)
+        path_row.addWidget(self.inspect_button)
+        root.addLayout(path_row)
+
+        self.summary = QLabel(parent.t("boot_ready"))
+        self.summary.setWordWrap(True)
+        self.summary.setObjectName("panelHeading")
+        root.addWidget(self.summary)
+
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels([
+            parent.t("boot_col_name"), parent.t("boot_col_offset"),
+            parent.t("boot_col_size"), parent.t("boot_col_format"),
+        ])
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.table.itemSelectionChanged.connect(self._show_selected_component)
+        root.addWidget(self.table, 1)
+
+        details_label = QLabel(parent.t("boot_details"))
+        details_label.setObjectName("fieldLabel")
+        root.addWidget(details_label)
+        self.details = QTextEdit()
+        self.details.setReadOnly(True)
+        self.details.setFont(QFont("Consolas", 9))
+        self.details.setMaximumHeight(230)
+        self.details.setPlaceholderText(parent.t("boot_ready"))
+        root.addWidget(self.details)
+
+        buttons = QHBoxLayout()
+        buttons.addStretch(1)
+        self.export_button = QPushButton(parent.t("boot_export"))
+        self.export_button.setIcon(parent.icon_for("SP_DialogSaveButton"))
+        self.export_button.setEnabled(False)
+        self.export_button.clicked.connect(self._export_json)
+        buttons.addWidget(self.export_button)
+        close_button = QPushButton(parent.t("boot_close"))
+        close_button.setIcon(parent.icon_for("SP_DialogCloseButton"))
+        close_button.clicked.connect(self.close)
+        buttons.addWidget(close_button)
+        root.addLayout(buttons)
+
+    def _browse(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, self.main.t("boot_source"), str(Path.home()),
+            "Android boot images (*.img *.bin);;All files (*)",
+        )
+        if path:
+            self.source_edit.setText(path)
+            self._clear_report()
+
+    def _clear_report(self) -> None:
+        previous_report = self.report
+        self.report = None
+        if previous_report is not None and self.main.last_result is previous_report:
+            self.main.last_result = {}
+            self.main.report_button.setEnabled(False)
+        self.table.setRowCount(0)
+        self.details.clear()
+        self.summary.setText(self.main.t("boot_ready"))
+        self.export_button.setEnabled(False)
+
+    def _inspect(self) -> None:
+        source_text = self.source_edit.text().strip()
+        if not source_text:
+            QMessageBox.warning(self, self.windowTitle(), self.main.t("boot_ready"))
+            return
+        try:
+            result = inspect_boot_image(source_text)
+        except (OSError, ValueError) as exc:
+            self._clear_report()
+            QMessageBox.critical(self, self.windowTitle(), str(exc))
+            return
+
+        self.report = result
+        self.table.setRowCount(0)
+        # Copy the section dictionaries before adapting their display labels;
+        # the exported JSON report must retain the parser's canonical names.
+        rows: list[dict[str, Any]] = [dict(item) for item in result.get("sections", [])]
+        for section in rows:
+            if section.get("name") == "kernel" and section.get("present"):
+                kernel_format = str(section.get("detected_format", ""))
+                suffix = "-compressed kernel payload"
+                if kernel_format.lower().endswith(suffix):
+                    compression = kernel_format[:-len(suffix)].strip().upper()
+                    section["name"] = self.main.t("boot_row_kernel_compressed").format(
+                        format=compression
+                    )
+                    section["detected_format"] = f"{compression} · {kernel_format}"
+        trailing = result.get("trailing_region") or {}
+        footer = result.get("avb_footer")
+        if footer:
+            unclassified = int(trailing.get("unclassified_before_vbmeta_bytes", 0))
+            if unclassified:
+                rows.append({
+                    "name": self.main.t("boot_row_unclassified_before_vbmeta"),
+                    "offset_bytes": int(trailing.get("offset_bytes", 0)),
+                    "size_bytes": unclassified,
+                    "present": True,
+                    "detected_format": self.main.t("boot_format_unclassified_before_vbmeta"),
+                    "details": {
+                        "offset_bytes": int(trailing.get("offset_bytes", 0)),
+                        "size_bytes": unclassified,
+                        "description": self.main.t("boot_format_unclassified_before_vbmeta"),
+                        "trailing_region": trailing,
+                    },
+                })
+            vbmeta_region = trailing.get("vbmeta")
+            if vbmeta_region:
+                rows.append({
+                    "name": self.main.t("boot_row_vbmeta"),
+                    "offset_bytes": int(vbmeta_region.get("offset_bytes", 0)),
+                    "size_bytes": int(vbmeta_region.get("size_bytes", 0)),
+                    "present": bool(vbmeta_region.get("size_bytes")),
+                    "detected_format": (self.main.t("boot_format_vbmeta")
+                                        if vbmeta_region.get("header_present")
+                                        else self.main.t("boot_format_vbmeta_unknown")),
+                    "details": {"vbmeta_block": vbmeta_region, "avb_footer": footer},
+                })
+            elif int(trailing.get("unclassified_data_bytes", 0)):
+                rows.append({
+                    "name": self.main.t("boot_row_unclassified"),
+                    "offset_bytes": int(trailing.get("offset_bytes", 0)),
+                    "size_bytes": int(trailing.get("unclassified_data_bytes", 0)),
+                    "present": True,
+                    "detected_format": self.main.t("boot_format_unclassified_trailing"),
+                    "details": {"trailing_region": trailing, "avb_footer": footer},
+                })
+            unclassified_after = int(trailing.get("unclassified_after_vbmeta_bytes", 0))
+            if unclassified_after:
+                vbmeta_end = (
+                    int(vbmeta_region.get("end_bytes", 0))
+                    if vbmeta_region else int(trailing.get("offset_bytes", 0))
+                )
+                rows.append({
+                    "name": self.main.t("boot_row_unclassified_after_vbmeta"),
+                    "offset_bytes": vbmeta_end,
+                    "size_bytes": unclassified_after,
+                    "present": True,
+                    "detected_format": self.main.t("boot_format_unclassified_after_vbmeta"),
+                    "details": {
+                        "offset_bytes": vbmeta_end,
+                        "size_bytes": unclassified_after,
+                        "description": self.main.t("boot_format_unclassified_after_vbmeta"),
+                        "trailing_region": trailing,
+                    },
+                })
+            rows.append({
+                **footer,
+                "name": self.main.t("boot_row_avb_footer"),
+                "offset_bytes": int(footer.get("offset_bytes", 0)),
+                "size_bytes": int(footer.get("size_bytes", 64)),
+                "present": True,
+                "detected_format": self.main.t("boot_format_footer").format(
+                    version=f"{footer.get('version_major', '?')}.{footer.get('version_minor', '?')}",
+                    status=self.main.t({
+                        "valid": "boot_footer_state_valid",
+                        "warning": "boot_footer_state_warning",
+                        "invalid": "boot_footer_state_invalid",
+                    }.get(footer.get("structural_status"), "boot_footer_state_warning")),
+                ),
+            })
+        elif int(trailing.get("unclassified_data_bytes", 0)):
+            rows.append({
+                "name": self.main.t("boot_row_unclassified"),
+                "offset_bytes": int(trailing.get("offset_bytes", 0)),
+                "size_bytes": int(trailing.get("unclassified_data_bytes", 0)),
+                "present": True,
+                "detected_format": self.main.t("boot_format_unclassified_trailing"),
+                "details": {"trailing_region": trailing},
+            })
+        vendor_section = next((item for item in rows if item.get("name") == "vendor_ramdisk"), None)
+        if vendor_section:
+            for fragment in result.get("vendor_ramdisk_fragments", []):
+                rows.append({
+                    "name": f"vendor_ramdisk/{fragment.get('name') or fragment.get('index')}",
+                    "offset_bytes": int(vendor_section.get("offset_bytes", 0)) + int(fragment.get("offset_bytes", 0)),
+                    "size_bytes": int(fragment.get("size_bytes", 0)),
+                    "present": bool(fragment.get("size_bytes")),
+                    "detected_format": f"{fragment.get('type', 'UNKNOWN')} · {fragment.get('detected_format', '')}",
+                })
+        for item in rows:
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            values = (
+                str(item.get("name", "—")),
+                f"0x{int(item.get('offset_bytes', 0)):X} ({int(item.get('offset_bytes', 0)):,})",
+                f"{int(item.get('size_bytes', 0)):,} B",
+                str(item.get("detected_format", "—")) if item.get("present") else "—",
+            )
+            for column, value in enumerate(values):
+                cell = QTableWidgetItem(value)
+                cell.setData(Qt.ItemDataRole.UserRole, item)
+                cell.setToolTip(json.dumps(item.get("details", item), ensure_ascii=False, indent=2))
+                self.table.setItem(row, column, cell)
+
+        if footer is None:
+            footer_status = self.main.t("boot_footer_missing")
+        else:
+            footer_status = self.main.t({
+                "valid": "boot_footer_valid",
+                "warning": "boot_footer_warning",
+                "invalid": "boot_footer_invalid",
+            }.get(footer.get("structural_status"), "boot_footer_warning"))
+        self.summary.setText(self.main.t("boot_summary").format(
+            kind=result.get("image_type", "?"),
+            version=result.get("header_version_name", "?"),
+            page=f"{int(result.get('page_size_bytes', 0)):,}",
+            count=sum(1 for item in result.get("sections", []) if item.get("present")),
+            footer=footer_status,
+        ))
+        self.details.setPlainText(json.dumps(result, ensure_ascii=False, indent=2))
+        self.export_button.setEnabled(True)
+        self.main.last_result = result
+        self.main.report_button.setEnabled(True)
+        self.main.add_recent(result["input"])
+
+    def _show_selected_component(self) -> None:
+        selected = self.table.selectedItems()
+        if not selected:
+            return
+        item = selected[0].data(Qt.ItemDataRole.UserRole)
+        self.details.setPlainText(json.dumps(item, ensure_ascii=False, indent=2))
+
+    def _export_json(self) -> None:
+        if not self.report:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, self.main.t("boot_export"),
+            str(Path(self.report["input"]).with_suffix(".boot-report.json")),
+            "JSON report (*.json);;All files (*)",
+        )
+        if not path:
+            return
+        destination = Path(path).expanduser().resolve()
+        if destination == Path(self.report["input"]).resolve():
+            QMessageBox.warning(self, self.windowTitle(), self.main.t("boot_report_collision"))
+            return
+        if destination.exists():
+            answer = QMessageBox.question(
+                self, self.windowTitle(),
+                self.main.t("boot_replace_report"),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        try:
+            destination.write_text(json.dumps(self.report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.critical(self, self.windowTitle(), str(exc))
+            return
+        QMessageBox.information(self, self.windowTitle(), self.main.t("boot_report_saved").format(path=destination))
+
+
+class RamdiskWorker(QObject):
+    """Run bounded Ramdisk inspection or extraction away from the GUI thread."""
+
+    succeeded = Signal(dict)
+    failed = Signal(str)
+    finished = Signal()
+
+    def __init__(self, action: str, source: Path, *, fragment_index: int | None,
+                 max_unpacked_bytes: int, output_dir: Path | None = None,
+                 include_paths: set[str] | None = None, selected_path: str | None = None) -> None:
+        super().__init__()
+        self.action = action
+        self.source = source
+        self.fragment_index = fragment_index
+        self.max_unpacked_bytes = max_unpacked_bytes
+        self.output_dir = output_dir
+        self.include_paths = include_paths
+        self.selected_path = selected_path
+        self._cancel_event = threading.Event()
+
+    def request_cancel(self) -> None:
+        self._cancel_event.set()
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            if self.action == "inspect":
+                result = inspect_ramdisk(
+                    self.source, fragment_index=self.fragment_index,
+                    max_unpacked_bytes=self.max_unpacked_bytes,
+                    cancel_requested=self._cancel_event.is_set,
+                )
+            elif self.action == "extract" and self.output_dir is not None:
+                result = extract_ramdisk(
+                    self.source, self.output_dir, fragment_index=self.fragment_index,
+                    include_paths=self.include_paths,
+                    max_unpacked_bytes=self.max_unpacked_bytes,
+                    cancel_requested=self._cancel_event.is_set,
+                )
+            elif self.action == "preview" and self.selected_path is not None:
+                result = read_ramdisk_file(
+                    self.source, self.selected_path, fragment_index=self.fragment_index,
+                    max_unpacked_bytes=self.max_unpacked_bytes,
+                    cancel_requested=self._cancel_event.is_set,
+                )
+            else:
+                raise ValueError("Invalid Ramdisk worker operation")
+        except Exception as exc:
+            self.failed.emit(f"{type(exc).__name__}: {exc}")
+        else:
+            self.succeeded.emit(result)
+        finally:
+            self.finished.emit()
+
+
+class RamdiskInspectorDialog(QDialog):
+    """Inspect CPIO entries and safely extract selected paths from Android ramdisks."""
+
+    def __init__(self, parent: "MainWindow", initial_path: str = "") -> None:
+        super().__init__(parent)
+        self.main = parent
+        self.report: dict[str, Any] | None = None
+        self.thread: QThread | None = None
+        self.worker: RamdiskWorker | None = None
+        self._active_action: str | None = None
+        self._close_when_finished = False
+        self.setWindowTitle(parent.t("ramdisk_title"))
+        self.resize(1040, 720)
+        self.setMinimumSize(840, 580)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(15, 13, 15, 13)
+        root.setSpacing(8)
+        form = QFormLayout()
+        source_row = QHBoxLayout()
+        self.source_edit = QLineEdit(initial_path)
+        self.source_edit.setPlaceholderText(parent.t("ramdisk_pick"))
+        source_row.addWidget(self.source_edit, 1)
+        self.browse_button = QPushButton(parent.t("browse"))
+        self.browse_button.setIcon(parent.icon_for("SP_DialogOpenButton"))
+        self.browse_button.clicked.connect(self._browse)
+        source_row.addWidget(self.browse_button)
+        form.addRow(parent.t("ramdisk_source"), source_row)
+
+        options_row = QHBoxLayout()
+        self.fragment_check = QCheckBox(parent.t("ramdisk_fragment_check"))
+        options_row.addWidget(self.fragment_check)
+        self.fragment_spin = QSpinBox()
+        self.fragment_spin.setRange(0, 65535)
+        self.fragment_spin.setValue(0)
+        self.fragment_spin.setEnabled(False)
+        self.fragment_check.toggled.connect(self.fragment_spin.setEnabled)
+        self.source_edit.textChanged.connect(self._clear_report)
+        self.fragment_check.toggled.connect(self._clear_report)
+        self.fragment_spin.valueChanged.connect(self._clear_report)
+        options_row.addWidget(QLabel(parent.t("ramdisk_fragment_index")))
+        options_row.addWidget(self.fragment_spin)
+        options_row.addSpacing(10)
+        options_row.addWidget(QLabel(parent.t("ramdisk_limit_label")))
+        self.limit_spin = QSpinBox()
+        self.limit_spin.setRange(1, 8192)
+        self.limit_spin.setValue(512)
+        self.limit_spin.setSuffix(" MiB")
+        options_row.addWidget(self.limit_spin)
+        options_row.addStretch(1)
+        form.addRow(options_row)
+        root.addLayout(form)
+
+        action_row = QHBoxLayout()
+        self.inspect_button = QPushButton(parent.t("ramdisk_inspect"))
+        self.inspect_button.setIcon(parent.icon_for("SP_FileDialogContentsView"))
+        self.inspect_button.clicked.connect(self._inspect)
+        action_row.addWidget(self.inspect_button)
+        self.export_button = QPushButton(parent.t("ramdisk_export"))
+        self.export_button.setIcon(parent.icon_for("SP_DialogSaveButton"))
+        self.export_button.setEnabled(False)
+        self.export_button.clicked.connect(self._export_json)
+        action_row.addWidget(self.export_button)
+        self.preview_button = QPushButton(parent.t("ramdisk_preview_button"))
+        self.preview_button.setIcon(parent.icon_for("SP_FileDialogDetailedView"))
+        self.preview_button.setEnabled(False)
+        self.preview_button.clicked.connect(self._preview_selected)
+        action_row.addWidget(self.preview_button)
+        action_row.addStretch(1)
+        root.addLayout(action_row)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 1)
+        self.progress.setValue(0)
+        self.progress.setTextVisible(False)
+        self.progress.setMaximumHeight(8)
+        root.addWidget(self.progress)
+        self.summary = QLabel(parent.t("ramdisk_ready"))
+        self.summary.setWordWrap(True)
+        self.summary.setObjectName("panelHeading")
+        root.addWidget(self.summary)
+
+        filter_row = QHBoxLayout()
+        filter_row.addWidget(QLabel(parent.t("ramdisk_search_label")))
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText(parent.t("ramdisk_search_placeholder"))
+        self.search_edit.setClearButtonEnabled(True)
+        self.search_edit.textChanged.connect(self._apply_filters)
+        filter_row.addWidget(self.search_edit, 1)
+        filter_row.addWidget(QLabel(parent.t("ramdisk_filter_label")))
+        self.filter_combo = QComboBox()
+        for label_key, filter_key in (
+            ("ramdisk_filter_all", "all"),
+            ("ramdisk_filter_files", "file"),
+            ("ramdisk_filter_directories", "directory"),
+            ("ramdisk_filter_symlinks", "symlink"),
+            ("ramdisk_filter_executables", "executable"),
+            ("ramdisk_filter_configs", "config"),
+        ):
+            self.filter_combo.addItem(parent.t(label_key), filter_key)
+        self.filter_combo.currentIndexChanged.connect(self._apply_filters)
+        filter_row.addWidget(self.filter_combo)
+        self.visible_count_label = QLabel(parent.t("ramdisk_visible_count").format(visible=0, total=0))
+        filter_row.addWidget(self.visible_count_label)
+        root.addLayout(filter_row)
+
+        self.table = QTableWidget(0, 7)
+        self.table.setHorizontalHeaderLabels([
+            parent.t("ramdisk_col_path"), parent.t("ramdisk_col_type"),
+            parent.t("ramdisk_col_size"), parent.t("ramdisk_col_mode"),
+            parent.t("ramdisk_col_uid"), parent.t("ramdisk_col_gid"),
+            parent.t("ramdisk_col_crc"),
+        ])
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.verticalHeader().setVisible(False)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        for column in range(1, 7):
+            self.table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.itemSelectionChanged.connect(self._show_selected)
+        root.addWidget(self.table, 1)
+
+        self.details_tabs = QTabWidget()
+        self.details = QTextEdit()
+        self.details.setReadOnly(True)
+        self.details.setFont(QFont("Consolas", 9))
+        self.details.setPlaceholderText(parent.t("ramdisk_ready"))
+        self.details_tabs.addTab(self.details, parent.t("ramdisk_tab_details"))
+
+        preview_page = QWidget()
+        preview_layout = QVBoxLayout(preview_page)
+        preview_layout.setContentsMargins(5, 5, 5, 5)
+        self.preview_meta = QLabel(parent.t("ramdisk_preview_select"))
+        self.preview_meta.setWordWrap(True)
+        preview_layout.addWidget(self.preview_meta)
+        self.preview_edit = QTextEdit()
+        self.preview_edit.setReadOnly(True)
+        self.preview_edit.setFont(QFont("Consolas", 9))
+        self.preview_edit.setLineWrapMode(QTextEdit.LineWrapMode.NoWrap)
+        preview_layout.addWidget(self.preview_edit, 1)
+        self.details_tabs.addTab(preview_page, parent.t("ramdisk_tab_preview"))
+        self.preview_page = preview_page
+        root.addWidget(self.details_tabs, 1)
+
+        buttons = QHBoxLayout()
+        self.extract_selected_button = QPushButton(parent.t("ramdisk_extract_selected"))
+        self.extract_selected_button.setIcon(parent.icon_for("SP_DialogSaveButton"))
+        self.extract_selected_button.setEnabled(False)
+        self.extract_selected_button.clicked.connect(self._extract_selected)
+        buttons.addWidget(self.extract_selected_button)
+        self.extract_all_button = QPushButton(parent.t("ramdisk_extract_all"))
+        self.extract_all_button.setIcon(parent.icon_for("SP_DirOpenIcon"))
+        self.extract_all_button.setEnabled(False)
+        self.extract_all_button.clicked.connect(self._extract_all)
+        buttons.addWidget(self.extract_all_button)
+        self.cancel_button = QPushButton(parent.t("ramdisk_cancel"))
+        self.cancel_button.setIcon(parent.icon_for("SP_BrowserStop"))
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self._cancel_operation)
+        buttons.addWidget(self.cancel_button)
+        buttons.addStretch(1)
+        self.close_button = QPushButton(parent.t("ramdisk_close"))
+        self.close_button.setIcon(parent.icon_for("SP_DialogCloseButton"))
+        self.close_button.clicked.connect(self.close)
+        buttons.addWidget(self.close_button)
+        root.addLayout(buttons)
+
+    def _inspect(self) -> None:
+        """Inspect the selected ramdisk source in the background worker."""
+        self._clear_report()
+        self._start_worker("inspect")
+
+    def _browse(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, self.main.t("ramdisk_pick"), str(Path.home()),
+            "Android images and ramdisks (*.img *.bin *.gz *.lz4 *.cpio *.ramdisk);;All files (*)",
+        )
+        if path:
+            self.source_edit.setText(path)
+            self._clear_report()
+
+    def _clear_report(self) -> None:
+        previous_report = self.report
+        self.report = None
+        if previous_report is not None and self.main.last_result is previous_report:
+            self.main.last_result = {}
+            self.main.report_button.setEnabled(False)
+        self.table.setRowCount(0)
+        self.details.clear()
+        self.preview_edit.clear()
+        self.preview_meta.setText(self.main.t("ramdisk_preview_select"))
+        self.search_edit.clear()
+        self.filter_combo.setCurrentIndex(0)
+        self.visible_count_label.setText(self.main.t("ramdisk_visible_count").format(visible=0, total=0))
+        self.summary.setText(self.main.t("ramdisk_ready"))
+        self.export_button.setEnabled(False)
+        self.preview_button.setEnabled(False)
+        self.extract_selected_button.setEnabled(False)
+        self.extract_all_button.setEnabled(False)
+
+    def _start_worker(self, action: str, *, output_dir: Path | None = None,
+                      include_paths: set[str] | None = None,
+                      selected_path: str | None = None) -> None:
+        source_text = self.source_edit.text().strip()
+        if not source_text:
+            QMessageBox.warning(self, self.windowTitle(), self.main.t("ramdisk_ready"))
+            return
+        source = Path(source_text).expanduser().resolve()
+        if not source.is_file():
+            QMessageBox.warning(self, self.windowTitle(), f"{self.main.t('ramdisk_source')}: {source}")
+            return
+        fragment_index = self.fragment_spin.value() if self.fragment_check.isChecked() else None
+        self._active_action = action
+        self._set_busy(True)
+        self.summary.setText(self.main.t("ramdisk_busy"))
+        self.thread = QThread(self)
+        self.worker = RamdiskWorker(
+            action, source, fragment_index=fragment_index,
+            max_unpacked_bytes=self.limit_spin.value() * 1024 * 1024,
+            output_dir=output_dir, include_paths=include_paths, selected_path=selected_path,
+        )
+        self.worker.moveToThread(self.thread)
+        self.thread.started.connect(self.worker.run)
+        self.worker.succeeded.connect(self._worker_succeeded)
+        self.worker.failed.connect(self._worker_failed)
+        self.worker.finished.connect(self.thread.quit)
+        self.worker.finished.connect(self.worker.deleteLater)
+        self.thread.finished.connect(self._worker_thread_finished)
+        self.thread.finished.connect(self.thread.deleteLater)
+        self.thread.start()
+
+    def _set_busy(self, busy: bool) -> None:
+        for widget in (self.source_edit, self.browse_button, self.inspect_button, self.export_button,
+                       self.preview_button, self.search_edit, self.filter_combo,
+                       self.extract_selected_button, self.extract_all_button,
+                       self.fragment_check, self.fragment_spin, self.limit_spin):
+            widget.setEnabled(not busy and (widget is not self.export_button or self.report is not None)
+                              and (widget is not self.extract_all_button or self.report is not None)
+                              and (widget is not self.extract_selected_button or bool(self.table.selectedItems())))
+        self.fragment_spin.setEnabled(not busy and self.fragment_check.isChecked())
+        selected_rows = sorted({item.row() for item in self.table.selectedItems()})
+        selected_entry = (self.table.item(selected_rows[0], 0).data(Qt.ItemDataRole.UserRole)
+                          if selected_rows and self.table.item(selected_rows[0], 0) else None)
+        self.preview_button.setEnabled(
+            not busy and isinstance(selected_entry, dict) and selected_entry.get("type") == "file"
+        )
+        self.cancel_button.setEnabled(busy)
+        self.close_button.setEnabled(not busy)
+        self.progress.setRange(0, 0 if busy else 1)
+        if not busy:
+            self.progress.setValue(0)
+
+    def _cancel_operation(self) -> None:
+        if self.worker is None or self.thread is None or not self.thread.isRunning():
+            return
+        self.cancel_button.setEnabled(False)
+        self.summary.setText(self.main.t("ramdisk_cancelling"))
+        self.worker.request_cancel()
+
+    @Slot(dict)
+    def _worker_succeeded(self, result: dict[str, Any]) -> None:
+        if self._active_action == "inspect":
+            self.report = result
+            self._populate_report(result)
+            self.export_button.setEnabled(True)
+            self.extract_all_button.setEnabled(True)
+            self.main.last_result = result
+            self.main.report_button.setEnabled(True)
+        elif self._active_action == "preview":
+            if result.get("is_text"):
+                content = result.get("text_preview") or self.main.t("ramdisk_preview_empty")
+                self.preview_edit.setPlainText(content)
+            else:
+                self.preview_edit.setPlainText(result.get("hex_preview") or "—")
+            truncated = self.main.t("ramdisk_preview_truncated") if result.get("truncated") else ""
+            if result.get("is_text"):
+                self.preview_meta.setText(self.main.t("ramdisk_preview_text_meta").format(
+                    path=result.get("path", ""), size=f"{int(result.get('size_bytes', 0)):,}",
+                    encoding=result.get("encoding", "UTF-8"), truncated=truncated,
+                ))
+            else:
+                self.preview_meta.setText(
+                    f"{result.get('path', '')} · {int(result.get('size_bytes', 0)):,} B · "
+                    f"{self.main.t('ramdisk_preview_binary')}{truncated}"
+                )
+            self.details_tabs.setCurrentWidget(self.preview_page)
+            self.summary.setText(self.main.t("ramdisk_preview_done").format(path=result.get("path", "")))
+        else:
+            QMessageBox.information(
+                self, self.windowTitle(), self.main.t("ramdisk_extract_done").format(
+                    files=result.get("extracted_files", 0),
+                    dirs=result.get("created_directories", 0),
+                    links=result.get("symlinks_listed", 0),
+                    path=result.get("output_dir", ""),
+                ),
+            )
+            self.main.last_result = result
+            self.main.report_button.setEnabled(True)
+
+    @Slot(str)
+    def _worker_failed(self, message: str) -> None:
+        if "RamdiskCancelled" in message:
+            self.summary.setText(self.main.t("ramdisk_cancelled"))
+            if not self._close_when_finished:
+                QMessageBox.information(self, self.windowTitle(), self.main.t("ramdisk_cancelled"))
+            return
+        self.summary.setText(self.main.t("ramdisk_error"))
+        QMessageBox.critical(self, self.windowTitle(), message)
+
+    @Slot()
+    def _worker_thread_finished(self) -> None:
+        self._set_busy(False)
+        self.thread = None
+        self.worker = None
+        self._active_action = None
+        if self._close_when_finished:
+            self.close()
+
+    def _populate_report(self, report: dict[str, Any]) -> None:
+        self.report = report
+        self.table.setRowCount(0)
+        for entry in report.get("entries", []):
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            values = (
+                str(entry.get("path", "")), str(entry.get("type", "unknown")),
+                f"{int(entry.get('size_bytes', 0)):,} B", str(entry.get("permissions_octal", "")),
+                str(entry.get("uid", "")), str(entry.get("gid", "")),
+                str(entry.get("checksum_status", "—")),
+            )
+            for column, value in enumerate(values):
+                cell = QTableWidgetItem(value)
+                cell.setData(Qt.ItemDataRole.UserRole, entry)
+                cell.setToolTip(json.dumps(entry, ensure_ascii=False, indent=2))
+                self.table.setItem(row, column, cell)
+        self.summary.setText(self.main.t("ramdisk_summary").format(
+            compression=report.get("compression_format", "?"),
+            cpio=", ".join(report.get("cpio_formats", [])) or "?",
+            files=report.get("file_count", 0), dirs=report.get("directory_count", 0),
+            links=report.get("symlink_count", 0), archives=report.get("archive_count", 0),
+        ))
+        self.export_button.setEnabled(True)
+        self.extract_all_button.setEnabled(True)
+        self.extract_selected_button.setEnabled(False)
+        details = {key: value for key, value in report.items() if key != "entries"}
+        details["entries_preview"] = report.get("entries", [])[:30]
+        details["display_note"] = self.main.t("ramdisk_symlink_note")
+        self.details.setPlainText(json.dumps(details, ensure_ascii=False, indent=2))
+        self.preview_edit.clear()
+        self.preview_meta.setText(self.main.t("ramdisk_preview_select"))
+        self.details_tabs.setCurrentWidget(self.details)
+        self._apply_filters()
+        self.main.last_result = report
+        self.main.report_button.setEnabled(True)
+
+    @staticmethod
+    def _is_config_entry(entry: dict[str, Any]) -> bool:
+        path = str(entry.get("path", "")).replace("\\", "/").lower()
+        name = path.rsplit("/", 1)[-1]
+        suffix = Path(name).suffix
+        return (
+            suffix in {".rc", ".prop", ".fstab", ".conf", ".cfg", ".ini", ".xml",
+                       ".json", ".txt", ".sh", ".te", ".policy", ".rule", ".service"}
+            or name.startswith(("fstab.", "init.", "init.", "ueventd.", "vold.", "sepolicy"))
+            or name in {"build.prop", "default.prop", "init", "ueventd.rc", "prop.default"}
+        )
+
+    def _apply_filters(self, *_args) -> None:
+        query = self.search_edit.text().strip().casefold()
+        category = self.filter_combo.currentData()
+        visible = 0
+        for row in range(self.table.rowCount()):
+            cell = self.table.item(row, 0)
+            entry = cell.data(Qt.ItemDataRole.UserRole) if cell is not None else {}
+            path = str(entry.get("path", "") if isinstance(entry, dict) else "").casefold()
+            entry_type = str(entry.get("type", "unknown")) if isinstance(entry, dict) else "unknown"
+            matches_query = not query or query in path
+            mode = int(entry.get("mode", 0)) if isinstance(entry, dict) else 0
+            if category == "all":
+                matches_category = True
+            elif category == "executable":
+                matches_category = entry_type == "file" and bool(mode & 0o111)
+            elif category == "config":
+                matches_category = entry_type == "file" and self._is_config_entry(entry)
+            else:
+                matches_category = entry_type == category
+            show = matches_query and matches_category
+            self.table.setRowHidden(row, not show)
+            visible += int(show)
+        self.visible_count_label.setText(self.main.t("ramdisk_visible_count").format(
+            visible=visible, total=self.table.rowCount()
+        ))
+        # A row hidden by a new filter must not remain selected for extraction.
+        self.table.clearSelection()
+        self.preview_button.setEnabled(False)
+        self.extract_selected_button.setEnabled(False)
+
+    def _show_selected(self) -> None:
+        rows = sorted({item.row() for item in self.table.selectedItems()})
+        if not rows:
+            if self.report is not None and self.thread is None:
+                self.extract_selected_button.setEnabled(False)
+                self.preview_button.setEnabled(False)
+            return
+        row = rows[0]
+        item = self.table.item(row, 0).data(Qt.ItemDataRole.UserRole)
+        if isinstance(item, dict):
+            self.details.setPlainText(json.dumps(item, ensure_ascii=False, indent=2))
+        if self.thread is None and self.report is not None:
+            self.extract_selected_button.setEnabled(True)
+            self.preview_button.setEnabled(bool(isinstance(item, dict) and item.get("type") == "file"))
+
+    def _preview_selected(self) -> None:
+        rows = sorted({item.row() for item in self.table.selectedItems()})
+        if not rows:
+            QMessageBox.information(self, self.windowTitle(), self.main.t("ramdisk_preview_select"))
+            return
+        item = self.table.item(rows[0], 0).data(Qt.ItemDataRole.UserRole)
+        if not isinstance(item, dict) or item.get("type") != "file":
+            QMessageBox.information(self, self.windowTitle(), self.main.t("ramdisk_preview_select"))
+            return
+        self.preview_meta.setText(self.main.t("ramdisk_busy"))
+        self._start_worker("preview", selected_path=str(item.get("path", "")))
+
+    def _extract_to(self, include_paths: set[str] | None) -> None:
+        if self.report is None:
+            return
+        output_text = QFileDialog.getExistingDirectory(self, self.main.t("ramdisk_output"), str(Path.home()))
+        if not output_text:
+            return
+        self._start_worker("extract", output_dir=Path(output_text), include_paths=include_paths)
+
+    def _extract_selected(self) -> None:
+        rows = sorted({item.row() for item in self.table.selectedItems()})
+        if not rows:
+            QMessageBox.information(self, self.windowTitle(), self.main.t("ramdisk_select_paths"))
+            return
+        paths = {self.table.item(row, 0).text() for row in rows}
+        self._extract_to(paths)
+
+    def _extract_all(self) -> None:
+        self._extract_to(None)
+
+    def _export_json(self) -> None:
+        if self.report is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, self.main.t("ramdisk_export"),
+            str(Path(self.report["input"]).with_suffix(".ramdisk-report.json")),
+            "JSON report (*.json);;All files (*)",
+        )
+        if not path:
+            return
+        destination = Path(path).expanduser().resolve()
+        if destination == Path(self.report["input"]).resolve():
+            QMessageBox.warning(self, self.windowTitle(), self.main.t("boot_report_collision"))
+            return
+        if destination.exists():
+            answer = QMessageBox.question(
+                self, self.windowTitle(), self.main.t("boot_replace_report"),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        try:
+            destination.write_text(json.dumps(self.report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.critical(self, self.windowTitle(), str(exc))
+            return
+        QMessageBox.information(self, self.windowTitle(), self.main.t("ramdisk_export_saved").format(path=destination))
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt API name
+        if self.thread is not None and self.thread.isRunning():
+            event.ignore()
+            QMessageBox.information(self, self.windowTitle(), self.main.t("ramdisk_busy"))
+            return
+        super().closeEvent(event)
+
+
 class SparseValidatorWorker(QObject):
     progress = Signal(dict)
     succeeded = Signal(dict)
@@ -4927,6 +5879,18 @@ class MainWindow(QWidget):
         self.merge_button.triggered.connect(self._open_merge)
         self.vbmeta_action=QAction(self.icon_for("SP_MessageBoxInformation"),self.t("vbmeta_action"),self)
         self.vbmeta_action.triggered.connect(self._open_vbmeta)
+        self.boot_action=QAction(self.icon_for("SP_DriveHDIcon"),self.t("boot_action"),self)
+        self.boot_action.triggered.connect(self._open_boot_inspector)
+        self.ramdisk_action = QAction(
+            self.icon_for("SP_FileDialogListView"), self.t("ramdisk_action"), self
+        )
+        self.ramdisk_action.setObjectName("ramdiskInspectorAction")
+        self.ramdisk_action.setStatusTip(self.t("ramdisk_title"))
+        # QAction.triggered emits a checked boolean.  Use an explicit adapter so
+        # the menu action always invokes the zero-argument dialog opener.
+        self.ramdisk_action.triggered.connect(
+            lambda _checked=False: self._open_ramdisk_inspector()
+        )
         self.report_button=QAction(self.icon_for("SP_DialogSaveButton"),self.t("save_report"),self)
         self.report_button.triggered.connect(self._save_last_report)
         self.report_button.setEnabled(False)
@@ -4934,6 +5898,8 @@ class MainWindow(QWidget):
         self.diagnostics_button.triggered.connect(self._open_diagnostics)
         self.tools_menu.addAction(self.merge_button)
         self.tools_menu.addAction(self.vbmeta_action)
+        self.tools_menu.addAction(self.boot_action)
+        self.tools_menu.addAction(self.ramdisk_action)
         self.tools_menu.addAction(self.report_button)
         self.tools_menu.addSeparator()
         self.tools_menu.addAction(self.diagnostics_button)
@@ -5047,7 +6013,7 @@ class MainWindow(QWidget):
         self.analyze_button.setText(d["analyze"]); self.structure_button.setText(d["structure_button"])
         self.queue_button.setText(d["queue"]); self.super_button.setText(d["super_button"])
         self.super_button.setToolTip(d["super_title"]); self.tools_button.setText(d["tools_menu"])
-        self.merge_button.setText(d["merge"]); self.vbmeta_action.setText(d["vbmeta_action"]); self.report_button.setText(d["save_report"])
+        self.merge_button.setText(d["merge"]); self.vbmeta_action.setText(d["vbmeta_action"]); self.boot_action.setText(d["boot_action"]); self.ramdisk_action.setText(d["ramdisk_action"]); self.report_button.setText(d["save_report"])
         self.diagnostics_button.setText(d["diagnostics_button"])
         self.recent_label.setText(d["recent_short"]); self.language_label.setText(d["language"])
         self._rebuild_recents()
@@ -5508,6 +6474,36 @@ class MainWindow(QWidget):
         dialog = VBMetaInspectorDialog(self)
         dialog.show()
         self._keep_dialog(dialog)
+    def _open_boot_inspector(self) -> None:
+        source = self.source_edit.text().strip()
+        dialog = BootImageInspectorDialog(self)
+        if source and Path(source).is_file():
+            dialog.source_edit.setText(source)
+        dialog.show()
+        self._keep_dialog(dialog)
+    def _open_ramdisk_inspector(self) -> None:
+        """Open Ramdisk Inspector and surface construction errors to the user."""
+        try:
+            source = self.source_edit.text().strip()
+            initial_path = source if source and Path(source).is_file() else ""
+            dialog = RamdiskInspectorDialog(self, initial_path)
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+            # Retain the Python wrapper before showing the modeless dialog.
+            self._keep_dialog(dialog)
+            dialog.show()
+            dialog.raise_()
+            dialog.activateWindow()
+        except Exception as exc:
+            details = traceback.format_exc()
+            message = f"Could not open Ramdisk Inspector: {type(exc).__name__}: {exc}"
+            self.append_log(
+                "error", message, category="application",
+                details={"traceback": details},
+            )
+            QMessageBox.critical(
+                self, self.t("ramdisk_action"),
+                f"{self.t('ramdisk_error')}\n\n{message}\n\n{details}",
+            )
     def _open_queue(self) -> None:
         dialog=BatchQueueDialog(self); dialog.show(); self._keep_dialog(dialog)
     def _open_merge(self) -> None:

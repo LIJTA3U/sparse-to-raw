@@ -1,6 +1,14 @@
 ## [Unreleased] — v0.7.0 development
 
 ### Added
+- Added the Android Ramdisk Inspector: `ramdisk-info` inventories CPIO entries from boot/init_boot/recovery, vendor_boot v3/v4 fragments, and standalone archives; `ramdisk-extract` safely extracts selected paths or the complete archive.
+- Added CPIO newc/crc parsing, crc checksum validation, concatenated archive overlays, and built-in decompression for gzip, bzip2, XZ, LZMA-alone, and LZ4 frame/legacy. Zstandard and LZO/lzop are detected but not decompressed.
+- Added bounded extraction, unsafe-path rejection, symlink/special-file manifests, JSON reports, and a bilingual GUI with background work and cancellation.
+- Added Ramdisk tests and English/Russian documentation.
+- Expanded Kernel compression-signature hints to gzip, bzip2, XZ, Zstandard, LZ4 frame/legacy, LZO/lzop, and LZMA, while retaining architecture-specific ARM64/ARM32/x86 header detection.
+- Parse the 64-byte AVB footer at the end of boot/vendor_boot images: report footer version, original image size, VBMeta offset/size, `AVB0` header presence, reserved-byte state, structural range status, and a breakdown of unclassified trailing regions. This does not verify VBMeta digests or signatures.
+- Added the read-only `boot-info` CLI command and Boot Image Inspector in the GUI Tools menu. It parses legacy Android boot headers v0–v2, generic boot headers v3–v4, and `vendor_boot` v3–v4, including component ranges, OS/build fields, kernel and ramdisk format hints, vendor ramdisk fragments, and bootconfig.
+- Added regression tests and bilingual documentation for boot image layouts, bounds checking, and the distinction between inferred image roles and partition names. The inspector does not unpack payloads or verify AVB signatures.
 - Added the read-only `vbmeta-info` CLI command and AVB / VBMeta Inspector in the GUI Tools menu. It parses standalone VBMeta and AVB-footer images, header flags, rollback metadata, public-key fingerprints, and supported Property, Hash, Hashtree, Kernel Cmdline, and Chain Partition descriptors.
 - Added bounded parsing, block-overlap checks, and embedded SHA-256 / SHA-512 digest comparison for supported AVB algorithms. RSA signature verification, trusted-key validation, and device rollback-state comparison are intentionally not performed.
 - Added bilingual AVB / VBMeta CLI and GUI documentation.

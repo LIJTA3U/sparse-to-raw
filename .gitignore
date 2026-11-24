@@ -14,3 +14,6 @@ htmlcov/
 build/
 dist/
 *.spec
+# Keep the small deterministic binary fixtures used by the test suite.
+!tests/fixtures/
+!tests/fixtures/*.img

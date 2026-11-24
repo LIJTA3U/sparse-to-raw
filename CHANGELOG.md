@@ -1,6 +1,19 @@
 ## [Unreleased] — v0.7.0 development
 
 ### Added
+- Added `ramdisk-info` and `ramdisk-extract` for CPIO inventory and safe extraction from boot/init_boot/recovery, `vendor_boot` v3/v4 (with explicit fragment selection when required), and standalone ramdisk archives.
+- Added CPIO newc/crc parsing, checksum validation for crc archives, concatenated archive overlays, and decompression for gzip, bzip2, XZ, LZMA-alone, LZ4 frame, and LZ4 legacy streams. Zstandard and LZO/lzop are detected but not decompressed in the dependency-free build.
+- Added safe selected-path extraction, decompression and entry-count limits, symlink/special-file manifests, JSON reports, and source-image preservation.
+- Added the bilingual Ramdisk Inspector GUI with inventory table, fragment selector, configurable decompression limit, selected/all extraction, JSON export, and background cancellation.
+- Added case-insensitive CPIO path search and category filters for all entries, files, directories, symlinks, executables, and likely configuration files.
+- Added bounded text-file preview (up to 256 KiB), HEX preview for binary entries, and visible UID/GID columns.
+- Added a read-only `read_ramdisk_file` API for bounded previews without materializing CPIO paths in the destination filesystem.
+- Added Ramdisk unit tests and bilingual CLI, GUI, and format/limitation documentation.
+- Made compressed Kernel formats explicit in the Boot Image Inspector table (for example, `Kernel (GZIP)`) and added separate, clearly named rows for unclassified bytes before and after VBMeta, with byte-range details and tooltips. Added bilingual GUI regression coverage for these rows.
+- Expanded Kernel compression-signature hints to gzip, bzip2, XZ, Zstandard, LZ4 frame/legacy, LZO/lzop, and LZMA, while retaining architecture-specific ARM64/ARM32/x86 header detection.
+- Parse the 64-byte AVB footer at the end of boot/vendor_boot images: report footer version, original image size, VBMeta offset/size, `AVB0` header presence, reserved-byte state, structural range status, and a breakdown of unclassified trailing regions. This does not verify VBMeta digests or signatures.
+- Added the read-only `boot-info` CLI command and Boot Image Inspector in the GUI Tools menu. It parses legacy Android boot headers v0–v2, generic boot headers v3–v4, and `vendor_boot` v3–v4, including component ranges, OS/build fields, kernel and ramdisk format hints, vendor ramdisk fragments, and bootconfig.
+- Added regression tests and bilingual documentation for boot image layouts, bounds checking, and the distinction between inferred image roles and partition names. The inspector does not unpack payloads or verify AVB signatures.
 - Added the read-only `vbmeta-info` CLI command and AVB / VBMeta Inspector in the GUI Tools menu. It parses standalone VBMeta and AVB-footer images, header flags, rollback metadata, public-key fingerprints, and supported Property, Hash, Hashtree, Kernel Cmdline, and Chain Partition descriptors.
 - Added bounded parsing, block-overlap checks, and embedded SHA-256 / SHA-512 digest comparison for supported AVB algorithms. RSA signature verification, trusted-key validation, and device rollback-state comparison are intentionally not performed.
 - Added `qfil-validate` for a complete no-output QFIL preflight: source-range checks, full streaming validation of referenced Sparse files and CRCs, per-LUN output planning, collision checks, and available-space checks.
@@ -11,11 +24,16 @@
 - Dedicated bilingual Super Image GUI dialog with background inspection/extraction, progress, cancellation, and source/slot change invalidation.
 
 ### Changed
+- Ramdisk GUI inventory is invalidated when the source path or vendor_boot fragment selection changes; long operations can be cancelled from the dialog.
+- Ramdisk extraction rejects an output directory that contains the source image and checks existing JSON-report conflicts before extraction begins.
+- Ramdisk search/filter changes clear row selection to prevent hidden entries from being unintentionally extracted.
+- Fixed Git ignore rules for the small binary Super Image fixtures and added a GitHub Actions preflight step that reports missing fixture files before the unit suite starts.
 - Reorganized the main GUI toolbar into a five-item primary row and a compact secondary row. Less-frequent actions (Sparse merge, report export, and diagnostics) are grouped under an icon-bearing Tools menu.
 - Added icons/tooltips consistently to visible toolbar actions and tightened spacing to prevent clipped labels.
 - Super Image extraction now uses an atomic no-clobber commit when overwrite is not explicitly enabled.
 
 ### Limitations
+- Ramdisk inspection supports CPIO newc/crc. Zstandard and LZO/lzop signatures are detected but those streams are not decompressed without optional external dependencies. Symlinks and special device/socket/FIFO entries are reported to manifests rather than created; ownership, timestamps, directory permissions, SELinux labels, and capabilities are not restored.
 - LP metadata versions 10.0–10.2 are supported. Extraction currently requires extents to reference block device index 0; multi-image retrofit layouts are not supported.
 
 ---

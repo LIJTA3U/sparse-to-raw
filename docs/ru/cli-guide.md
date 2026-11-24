@@ -216,3 +216,38 @@ py sparse_to_raw.py --lang en vbmeta-info vbmeta.img
 Отчёт содержит требуемую версию libavb, алгоритм, rollback index и его расположение, флаги заголовка, release string, размерность и отпечатки публичного ключа, а также поддерживаемые descriptors типов Property, Hash, Hashtree, Kernel Cmdline и Chain Partition. Для поддерживаемого алгоритма инспектор вычисляет встроенный хеш VBMeta по заголовку и auxiliary block и сравнивает его с сохранённым значением. Несовпадение отражается в отчёте и не трактуется как результат проверки подписи.
 
 **Ограничение безопасности:** команда не проверяет RSA-подпись, не сравнивает публичный ключ с доверенным ключом или хранилищем устройства и не сопоставляет rollback index со значением, сохранённым на устройстве. Совпадение встроенного хеша само по себе не доказывает подлинность или доверие. Команда только читает входной файл и не изменяет его.
+
+## Анализ Android Boot Image
+
+Просмотр метаданных legacy `boot.img`, generic `boot.img` / `init_boot.img` или `vendor_boot.img`:
+
+```powershell
+py sparse_to_raw.py boot-info boot.img
+py sparse_to_raw.py boot-info vendor_boot.img
+py sparse_to_raw.py boot-info init_boot.img --json-report init-boot-report.json
+py sparse_to_raw.py --lang ru boot-info recovery.img
+```
+
+Поддерживаются legacy boot header v0–v2, generic boot header v3–v4 и `vendor_boot` header v3–v4. Отчёт содержит версию заголовка, размеры страницы и заголовка, разобранные поля, смещения и размеры компонентов, подсказки о формате Kernel/Ramdisk, наличие AVB footer, а для `vendor_boot` v4 — таблицу фрагментов vendor ramdisk и bootconfig. `--force` разрешает заменить существующий JSON-отчёт. Подробности и ограничения интерпретации приведены в [руководстве Boot Image Inspector](boot-image.md).
+
+## Анализ и извлечение Android Ramdisk
+
+Просмотреть список CPIO-записей внутри boot-образа или отдельного архива:
+
+```powershell
+py sparse_to_raw.py ramdisk-info boot.img --json-report ramdisk-report.json
+py sparse_to_raw.py ramdisk-info init_boot.img
+py sparse_to_raw.py ramdisk-info vendor_boot.img --fragment-index 1
+py sparse_to_raw.py ramdisk-info vendor-ramdisk.cpio.gz
+```
+
+Извлечь все обычные файлы/каталоги или выбрать отдельные пути повторяемым параметром `--include`:
+
+```powershell
+py sparse_to_raw.py ramdisk-extract boot.img --output-dir ramdisk-files
+py sparse_to_raw.py ramdisk-extract boot.img --output-dir selected --include init --include etc
+```
+
+`ramdisk-extract` поддерживает legacy/generic boot-образы, `vendor_boot` v3/v4 и отдельные CPIO-архивы. Если в `vendor_boot` v4 несколько фрагментов ramdisk, требуется `--fragment-index`. Выбранный каталог включает вложенные записи. Лимит распакованных данных по умолчанию — 512 МиБ; он меняется параметром `--max-unpacked-mib`. Сборка без сторонних зависимостей распаковывает gzip, bzip2, XZ, LZMA-alone и LZ4 frame/legacy. Сигнатуры Zstandard и LZO/lzop распознаются, но эти форматы не распаковываются. Поддерживаются CPIO `newc` и `crc`; checksum формата `crc` проверяется.
+
+Извлечение проверяет пути и не изменяет исходный образ. Существующие непустые каталоги защищены, если не указан `--force`. Символические ссылки перечисляются в `SYMLINKS.txt`, но не создаются как реальные ссылки; специальные узлы устройств/сокеты/FIFO записываются в `SPECIAL_FILES.txt`. Содержимое hardlink копируется в отдельные файлы; владелец, временные метки, права каталогов, SELinux labels и capabilities не восстанавливаются. Подробности приведены в [руководстве Ramdisk Inspector](ramdisk-inspector.md).

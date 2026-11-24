@@ -38,3 +38,5 @@ Get-FileHash "C:\path\to\output\system.img" -Algorithm SHA256
 ```
 
 The two `system.img` hashes must match.
+
+These three `.img` files are required test assets. The repository `.gitignore` explicitly permits `tests/fixtures/*.img`; keep all three files tracked in Git so the Super Image test passes in GitHub Actions on Windows and Linux.

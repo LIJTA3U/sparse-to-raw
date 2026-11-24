@@ -274,6 +274,15 @@ class SuperImageTests(unittest.TestCase):
     def test_packaged_multi_extent_fixture_matches_expected_partition_files(self) -> None:
         fixture_dir = Path(__file__).parent / "fixtures"
         fixture = fixture_dir / "super_multi_extent.img"
+        expected_system_path = fixture_dir / "expected_system.img"
+        expected_vendor_path = fixture_dir / "expected_vendor.img"
+        missing = [path.name for path in (fixture, expected_system_path, expected_vendor_path)
+                   if not path.is_file()]
+        self.assertFalse(
+            missing,
+            "Required test fixture file(s) missing: " + ", ".join(missing)
+            + ". Check that .gitignore permits tests/fixtures/*.img and commit the fixture files.",
+        )
         info = inspect_super_image(fixture)
         self.assertEqual(info["partition_count"], 2)
         system = next(item for item in info["partitions"] if item["name"] == "system")
@@ -284,11 +293,11 @@ class SuperImageTests(unittest.TestCase):
         self.assertEqual(report["extracted_count"], 2)
         self.assertEqual(
             (output / "system.img").read_bytes(),
-            (fixture_dir / "expected_system.img").read_bytes(),
+            expected_system_path.read_bytes(),
         )
         self.assertEqual(
             (output / "vendor.img").read_bytes(),
-            (fixture_dir / "expected_vendor.img").read_bytes(),
+            expected_vendor_path.read_bytes(),
         )
 
     def test_invalid_metadata_checksum_is_rejected_when_both_copies_fail(self) -> None:

@@ -1932,6 +1932,12 @@ def main(argv: list[str] | None = None) -> int:
     if arguments and arguments[0] == "vbmeta-info":
         from avb_inspector import run_vbmeta_cli
         return run_vbmeta_cli(arguments[1:])
+    if arguments and arguments[0] == "boot-info":
+        from boot_inspector import run_boot_cli
+        return run_boot_cli(arguments[1:])
+    if arguments and arguments[0] in {"ramdisk-info", "ramdisk-extract"}:
+        from ramdisk_inspector import run_ramdisk_cli
+        return run_ramdisk_cli(arguments[0], arguments[1:])
     if arguments and arguments[0] == "validate":
         from sparse_validator import validate_sparse
         command = argparse.ArgumentParser(

@@ -79,6 +79,21 @@ class CLILanguageTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 0)
         self.assertIn("Прочитать метаданные Android Verified Boot", russian.getvalue())
 
+    def test_boot_info_help_uses_selected_language(self) -> None:
+        english = io.StringIO()
+        with contextlib.redirect_stdout(english):
+            with self.assertRaises(SystemExit) as raised:
+                sparse_to_raw.main(["boot-info", "--help", "--lang", "en"])
+        self.assertEqual(raised.exception.code, 0)
+        self.assertIn("Inspect Android boot.img", english.getvalue())
+
+        russian = io.StringIO()
+        with contextlib.redirect_stdout(russian):
+            with self.assertRaises(SystemExit) as raised:
+                sparse_to_raw.main(["--lang", "ru", "boot-info", "--help"])
+        self.assertEqual(raised.exception.code, 0)
+        self.assertIn("Просмотреть метаданные Android boot.img", russian.getvalue())
+
     def test_language_option_is_removed_before_qfil_dispatch(self) -> None:
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
@@ -86,6 +101,23 @@ class CLILanguageTests(unittest.TestCase):
                 sparse_to_raw.main(["qfil-analyze", "--help", "--lang=ru"])
         self.assertEqual(raised.exception.code, 0)
         self.assertIn("Анализировать манифесты", stdout.getvalue())
+
+    def test_ramdisk_info_help_uses_selected_language(self) -> None:
+        english = io.StringIO()
+        with contextlib.redirect_stdout(english):
+            with self.assertRaises(SystemExit) as raised:
+                sparse_to_raw.main(["ramdisk-info", "--help", "--lang", "en"])
+        self.assertEqual(raised.exception.code, 0)
+        self.assertIn("Inspect CPIO contents", english.getvalue())
+        self.assertIn("--fragment-index", english.getvalue())
+
+        russian = io.StringIO()
+        with contextlib.redirect_stdout(russian):
+            with self.assertRaises(SystemExit) as raised:
+                sparse_to_raw.main(["--lang", "ru", "ramdisk-extract", "--help"])
+        self.assertEqual(raised.exception.code, 0)
+        self.assertIn("Безопасно извлечь выбранные пути CPIO", russian.getvalue())
+        self.assertIn("--output-dir", russian.getvalue())
 
 
 if __name__ == "__main__":

@@ -97,7 +97,7 @@ jobs:
         run: >-
           python -m PyInstaller --noconfirm --clean --onefile
           --name sparse-to-raw --distpath dist/cli --workpath build/cli
-          --specpath build/spec/cli --hidden-import avb_inspector sparse_to_raw.py
+          --specpath build/spec/cli --hidden-import avb_inspector --hidden-import boot_inspector --hidden-import ramdisk_inspector sparse_to_raw.py
 
       - name: Smoke-test packaged CLI
         shell: pwsh
@@ -126,6 +126,26 @@ jobs:
           & $cli --lang ru vbmeta-info --help | Out-Null
           if ($LASTEXITCODE -ne 0) {
             throw "Packaged CLI Russian vbmeta-info --help failed with exit code $LASTEXITCODE"
+          }
+
+          & $cli boot-info --help | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged CLI boot-info --help failed with exit code $LASTEXITCODE"
+          }
+
+          & $cli --lang ru boot-info --help | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged CLI Russian boot-info --help failed with exit code $LASTEXITCODE"
+          }
+
+          & $cli ramdisk-info --help | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged CLI ramdisk-info --help failed with exit code $LASTEXITCODE"
+          }
+
+          & $cli --lang ru ramdisk-extract --help | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged CLI Russian ramdisk-extract --help failed with exit code $LASTEXITCODE"
           }
 
       - name: Build GUI application folder
