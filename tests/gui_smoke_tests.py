@@ -8,7 +8,7 @@ import tempfile
 import threading
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 import zlib
 from pathlib import Path
 
@@ -20,7 +20,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtCore import Qt, QThread  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from sparse_to_raw import APP_VERSION as CORE_APP_VERSION, ConversionCancelled, inspect_sparse, read_sparse_chunk_page  # noqa: E402
@@ -323,6 +323,11 @@ class SparseToRawGuiTests(unittest.TestCase):
             dialog.close()
             window.close()
 
+    def test_ramdisk_config_filter_does_not_classify_init_binary_as_config(self) -> None:
+        self.assertFalse(RamdiskInspectorDialog._is_config_entry({"path": "init", "type": "file"}))
+        self.assertTrue(RamdiskInspectorDialog._is_config_entry({"path": "init.rc", "type": "file"}))
+        self.assertTrue(RamdiskInspectorDialog._is_config_entry({"path": "etc/fstab", "type": "file"}))
+
     def test_ramdisk_inspector_search_and_category_filters(self) -> None:
         window = MainWindow()
         dialog = RamdiskInspectorDialog(window)
@@ -447,6 +452,51 @@ class SparseToRawGuiTests(unittest.TestCase):
                 dialog.activateWindow.assert_called_once_with()
                 self.assertIn(dialog, window._dialogs)
         finally:
+            window.close()
+
+    def test_main_window_close_ignores_mock_dialog_threads_without_opening_modal_prompt(self) -> None:
+        window = MainWindow()
+        # MagicMock fabricates a truthy isRunning() return value unless the
+        # close path checks that the object is an actual QThread.
+        window._dialogs.append(MagicMock())
+        try:
+            with patch("sparse_to_raw_gui.QMessageBox.question") as question:
+                self.assertTrue(window.close())
+                question.assert_not_called()
+            self.assertFalse(window.operation_running())
+        finally:
+            if window.isVisible():
+                window.close()
+
+    def test_main_window_initializes_modeless_dialog_registry(self) -> None:
+        window = MainWindow()
+        try:
+            self.assertEqual(window._dialogs, [])
+        finally:
+            window.close()
+
+    def test_operation_running_ignores_non_qthread_dialog_placeholders(self) -> None:
+        window = MainWindow()
+        try:
+            window._dialogs.append(SimpleNamespace(
+                thread=SimpleNamespace(isRunning=lambda: True)
+            ))
+            self.assertFalse(window.operation_running())
+        finally:
+            window.close()
+
+    def test_operation_running_detects_a_real_qthread(self) -> None:
+        window = MainWindow()
+        thread = QThread(window)
+        thread.start()
+        try:
+            self.assertTrue(thread.isRunning())
+            window._thread = thread
+            self.assertTrue(window.operation_running())
+        finally:
+            thread.quit()
+            self.assertTrue(thread.wait(3000))
+            window._thread = None
             window.close()
 
     def test_ramdisk_menu_action_reports_dialog_construction_error(self) -> None:

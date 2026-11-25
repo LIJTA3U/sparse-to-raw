@@ -69,6 +69,25 @@ APP_NAME = "sparse-to-raw"
 APP_USER_MODEL_ID = "LIJTA3U.sparse-to-raw"
 MAX_RECENT = 12
 
+
+def _qt_thread_is_running(thread: object) -> bool:
+    """Return True only for a live Qt thread, never for duck-typed mocks.
+
+    Qt dialogs may be represented by MagicMock/SimpleNamespace objects in
+    headless GUI tests.  Those objects can expose an ``isRunning`` mock that
+    is truthy even though no worker exists; treating it as a real QThread can
+    open a modal close-confirmation dialog and hang CI.
+    """
+    if not isinstance(thread, QThread):
+        return False
+    try:
+        return thread.isRunning()
+    except RuntimeError:
+        # The C++ QThread may already have been deleted while its Python
+        # wrapper remains reachable during Qt teardown.
+        return False
+
+
 COLORS = {
     "background": "#070d16", "panel": "#0b1520", "panel_alt": "#0d1c29",
     "border": "#243a47", "cyan": "#21d9ef", "cyan_dim": "#147b91",
@@ -4036,8 +4055,8 @@ class RamdiskInspectorDialog(QDialog):
         return (
             suffix in {".rc", ".prop", ".fstab", ".conf", ".cfg", ".ini", ".xml",
                        ".json", ".txt", ".sh", ".te", ".policy", ".rule", ".service"}
-            or name.startswith(("fstab.", "init.", "init.", "ueventd.", "vold.", "sepolicy"))
-            or name in {"build.prop", "default.prop", "init", "ueventd.rc", "prop.default"}
+            or name.startswith(("fstab.", "init.", "ueventd.", "vold.", "sepolicy"))
+            or name in {"fstab", "build.prop", "default.prop", "ueventd.rc", "prop.default"}
         )
 
     def _apply_filters(self, *_args) -> None:
@@ -4146,7 +4165,7 @@ class RamdiskInspectorDialog(QDialog):
         QMessageBox.information(self, self.windowTitle(), self.main.t("ramdisk_export_saved").format(path=destination))
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API name
-        if self.thread is not None and self.thread.isRunning():
+        if _qt_thread_is_running(self.thread):
             event.ignore()
             QMessageBox.information(self, self.windowTitle(), self.main.t("ramdisk_busy"))
             return
@@ -5736,6 +5755,10 @@ class MainWindow(QWidget):
         self.verify_output_default = bool(self.settings.value("verify_output", True, type=bool))
         self.recent_files = [str(x) for x in self.settings.value("recent_files", [], type=list) if str(x)]
         self._last_progress = {}; self.last_result: dict[str, Any] | None = None
+        # Keep modeless tool dialogs alive for the lifetime of the main window.
+        # Initialize the registry eagerly: operation_running() and closeEvent()
+        # inspect it even before the first dialog has been opened.
+        self._dialogs: list[QDialog] = []
         self._status_label = I18N[self.language]["status_idle"]; self._status_color = "muted"
         self._close_after_worker = False
         app_icon = QIcon(str(resource_path("assets/sparse-to-raw.ico")))
@@ -6341,15 +6364,15 @@ class MainWindow(QWidget):
         self.cancel_button.setVisible(busy); self.cancel_button.setEnabled(busy and self._worker is not None)
 
     def operation_running(self, exclude: QDialog | None = None) -> bool:
-        if self._thread is not None and self._thread.isRunning(): return True
+        if _qt_thread_is_running(self._thread): return True
         for dialog in getattr(self, "_dialogs", []):
             if dialog is exclude: continue
             thread = getattr(dialog, "thread", None)
-            if thread is not None and thread.isRunning(): return True
+            if _qt_thread_is_running(thread): return True
         return False
 
     def _start_conversion(self) -> None:
-        if self._thread is not None and self._thread.isRunning(): return
+        if _qt_thread_is_running(self._thread): return
         if self.operation_running():
             QMessageBox.information(self, self.t("window_title"), self.t("another_operation")); return
         try: source,destination,expected_size=validate_paths(self.source_edit.text(),self.output_edit.text())
@@ -6426,10 +6449,10 @@ class MainWindow(QWidget):
 
     def _check_close_after_workers(self) -> None:
         if not self._close_after_worker: return
-        if self._thread is not None and self._thread.isRunning(): return
+        if _qt_thread_is_running(self._thread): return
         for dialog in getattr(self, "_dialogs", []):
             thread = getattr(dialog, "thread", None)
-            if thread is not None and thread.isRunning(): return
+            if _qt_thread_is_running(thread): return
         self._close_after_worker = False
         self.close()
     @Slot()
@@ -6509,8 +6532,8 @@ class MainWindow(QWidget):
     def _open_merge(self) -> None:
         dialog=MergeDialog(self); dialog.show(); self._keep_dialog(dialog)
     def _keep_dialog(self,dialog:QDialog) -> None:
-        if not hasattr(self,"_dialogs"): self._dialogs=[]
-        self._dialogs.append(dialog); dialog.finished.connect(lambda _=0,d=dialog:self._dialogs.remove(d) if d in self._dialogs else None)
+        self._dialogs.append(dialog)
+        dialog.finished.connect(lambda _=0,d=dialog:self._dialogs.remove(d) if d in self._dialogs else None)
     def _save_last_report(self) -> None:
         if not self.last_result: return
         if self.last_result.get("operation") == "logical-image-comparison":
@@ -6533,8 +6556,8 @@ class MainWindow(QWidget):
         if files: self._set_source_path(files[0]); event.acceptProposedAction()
         else: event.ignore()
     def closeEvent(self,event) -> None:  # noqa: N802
-        active_dialogs=[d for d in getattr(self,"_dialogs",[]) if getattr(d,"thread",None) is not None and d.thread.isRunning()]
-        own_active=self._thread is not None and self._thread.isRunning()
+        active_dialogs=[d for d in getattr(self,"_dialogs",[]) if _qt_thread_is_running(getattr(d,"thread",None))]
+        own_active=_qt_thread_is_running(self._thread)
         if own_active or active_dialogs:
             answer=QMessageBox.question(self,self.t("window_title"),"A task is running. Cancel safely and close?",QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,QMessageBox.StandardButton.No)
             if answer==QMessageBox.StandardButton.Yes:

@@ -23,6 +23,13 @@
 - Regression fixtures for LP partitions assembled from multiple physically separated extents, covering RAW, Android Sparse, and CLI extraction paths.
 - Dedicated bilingual Super Image GUI dialog with background inspection/extraction, progress, cancellation, and source/slot change invalidation.
 
+### Fixed
+- The Ramdisk configuration-file filter now recognizes the extensionless `fstab` entry in addition to `fstab.*`.
+- The Ramdisk configuration filter no longer classifies the executable `init` binary as a configuration file; `init.rc` and extensionless `fstab` remain recognized.
+- `MainWindow` now initializes its modeless-dialog registry during construction, so worker-state checks and close handling are safe before the first tool dialog is opened.
+- GUI worker-state checks now treat only actual `QThread` instances as running workers. This prevents mocked dialog thread attributes from opening modal close prompts and hanging headless GUI tests.
+- The PySide6 GUI workflow now has job/step timeouts, unbuffered test output, and an early check for required Super Image binary fixtures.
+
 ### Changed
 - Ramdisk GUI inventory is invalidated when the source path or vendor_boot fragment selection changes; long operations can be cancelled from the dialog.
 - Ramdisk extraction rejects an output directory that contains the source image and checks existing JSON-report conflicts before extraction begins.
