@@ -21,7 +21,7 @@ if str(PROJECT_ROOT) not in sys.path:
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import Qt, QThread  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QDialogButtonBox, QDialog  # noqa: E402
 
 from sparse_to_raw import APP_VERSION as CORE_APP_VERSION, ConversionCancelled, inspect_sparse, read_sparse_chunk_page  # noqa: E402
 from diagnostics import DiagnosticStore  # noqa: E402
@@ -35,6 +35,9 @@ from sparse_to_raw_gui import (  # noqa: E402
     VBMetaInspectorDialog,
     BootImageInspectorDialog,
     RamdiskInspectorDialog,
+    RamdiskCompareSelectDialog,
+    RamdiskConfigDiffDialog,
+    build_config_diff_rows,
     QFILDialog,
     RawToSparseDialog,
     DiagnosticCenterDialog,
@@ -363,6 +366,86 @@ class SparseToRawGuiTests(unittest.TestCase):
             self.assertTrue(dialog.table.isRowHidden(rows["init"]))
         finally:
             dialog.close()
+            window.close()
+
+    def test_ramdisk_config_diff_marks_added_deleted_and_modified_lines(self) -> None:
+        rows = build_config_diff_rows(
+            "same\nold_value=1\nremove_me=1\nkeep\nend\n",
+            "same\nnew_value=2\nkeep\nadd_me=1\nend\n",
+        )
+        statuses = [row["status"] for row in rows]
+        self.assertEqual(statuses, ["equal", "modified", "deleted", "equal", "added", "equal"])
+        self.assertEqual(rows[1]["old_text"], "old_value=1")
+        self.assertEqual(rows[1]["new_text"], "new_value=2")
+        # The second old line is deleted, the following line is unchanged,
+        # and the addition appears after that unchanged anchor.
+        self.assertEqual(rows[2]["status"], "deleted")
+        self.assertEqual(rows[2]["old_text"], "remove_me=1")
+        self.assertEqual(rows[2]["new_text"], "")
+        self.assertEqual(rows[3]["status"], "equal")
+        self.assertEqual(rows[3]["old_text"], "keep")
+        self.assertEqual(rows[4]["status"], "added")
+        self.assertEqual(rows[4]["new_text"], "add_me=1")
+
+    def test_ramdisk_config_compare_button_uses_only_config_entries(self) -> None:
+        window = MainWindow()
+        dialog = RamdiskInspectorDialog(window)
+        report = {
+            "operation": "android-ramdisk-inspect", "input": "ramdisk.cpio.gz",
+            "compression_format": "gzip", "cpio_formats": ["newc"],
+            "archive_count": 1, "entry_count": 3, "file_count": 3,
+            "directory_count": 0, "symlink_count": 0, "entries": [
+                {"path": "fstab.mt6762", "type": "file", "size_bytes": 32, "mode": 0o100640},
+                {"path": "fstab.mt6765", "type": "file", "size_bytes": 32, "mode": 0o100640},
+                {"path": "init", "type": "file", "size_bytes": 128, "mode": 0o100755},
+            ],
+        }
+        try:
+            dialog._populate_report(report)
+            self.assertTrue(dialog.compare_configs_button.isEnabled())
+            self.assertEqual(dialog._config_file_paths(), ["fstab.mt6762", "fstab.mt6765"])
+            with patch("sparse_to_raw_gui.RamdiskCompareSelectDialog") as selector_class:
+                selector_class.return_value.exec.return_value = QDialog.DialogCode.Accepted
+                selector_class.return_value.selected_paths = ("fstab.mt6762", "fstab.mt6765")
+                with patch.object(dialog, "_start_worker") as start_worker:
+                    dialog.compare_configs_button.click()
+                    start_worker.assert_called_once_with(
+                        "compare", compare_paths=("fstab.mt6762", "fstab.mt6765")
+                    )
+        finally:
+            dialog.close()
+            window.close()
+
+    def test_ramdisk_config_compare_selector_prevents_same_file_selection(self) -> None:
+        window = MainWindow()
+        parent = RamdiskInspectorDialog(window)
+        try:
+            selector = RamdiskCompareSelectDialog(parent, ["fstab.a", "fstab.b"])
+            self.assertEqual(selector.selected_paths, ("fstab.a", "fstab.b"))
+            ok_button = selector.button_box.button(QDialogButtonBox.StandardButton.Ok)
+            self.assertTrue(ok_button.isEnabled())
+            selector.second_combo.setCurrentIndex(0)
+            self.assertFalse(ok_button.isEnabled())
+        finally:
+            parent.close()
+            window.close()
+
+    def test_ramdisk_config_diff_dialog_highlights_changed_rows(self) -> None:
+        window = MainWindow()
+        parent = RamdiskInspectorDialog(window)
+        try:
+            diff = RamdiskConfigDiffDialog(parent,
+                {"path": "fstab.old", "text_preview": "keep\nold=1\n"},
+                {"path": "fstab.new", "text_preview": "keep\nnew=2\nadded=1\n"},
+            )
+            self.assertEqual(diff.table.rowCount(), 3)
+            modified = diff.diff_rows[1]
+            self.assertEqual(modified["status"], "modified")
+            self.assertEqual(diff.table.item(1, 1).background().color().name(), "#3b321c")
+            self.assertEqual(diff.table.item(1, 3).background().color().name(), "#3b321c")
+            self.assertEqual(diff.table.item(2, 3).background().color().name(), "#183a2a")
+        finally:
+            parent.close()
             window.close()
 
     def test_ramdisk_selecting_regular_file_starts_preview_worker_automatically(self) -> None:

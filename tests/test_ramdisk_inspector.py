@@ -19,9 +19,11 @@ from ramdisk_inspector import (
     RamdiskCancelled,
     RamdiskError,
     _xxhash32,
+    build_config_diff_rows,
     extract_ramdisk,
     inspect_ramdisk,
     read_ramdisk_file,
+    read_ramdisk_files,
     run_ramdisk_cli,
 )
 
@@ -204,6 +206,66 @@ class RamdiskInspectorTests(unittest.TestCase):
                 self.assertTrue(result["text_detection_hint"])
                 self.assertIn("/system ext4", result["text_preview"])
                 self.assertFalse(result["truncated"])
+
+    def test_read_ramdisk_files_reads_two_configs_from_one_cpio_archive(self) -> None:
+        first = b"# device A\n/dev/block/by-name/system /system ext4 ro wait\n"
+        second = b"# device B\n/dev/block/by-name/system_a /system ext4 ro wait\n"
+        archive = cpio_archive([
+            ("fstab.mt6762", first, 0o100640, 1, 1),
+            ("fstab.mt6765", second, 0o100640, 2, 1),
+        ])
+        image = self.root / "compare-fstab.cpio.gz"
+        image.write_bytes(gzip.compress(archive))
+
+        results = read_ramdisk_files(image, ("fstab.mt6762", "fstab.mt6765"))
+
+        self.assertEqual([item["path"] for item in results], ["fstab.mt6762", "fstab.mt6765"])
+        self.assertEqual(results[0]["text_preview"], first.decode("utf-8"))
+        self.assertEqual(results[1]["text_preview"], second.decode("utf-8"))
+        self.assertTrue(all(item["is_text"] and not item["truncated"] for item in results))
+
+    def test_read_ramdisk_files_rejects_truncated_or_binary_inputs(self) -> None:
+        archive = cpio_archive([
+            ("fstab.one", b"A" * 512, 0o100640, 1, 1),
+            ("fstab.two", b"B" * 512, 0o100640, 2, 1),
+        ])
+        image = self.root / "compare-too-large.cpio.gz"
+        image.write_bytes(gzip.compress(archive))
+        with self.assertRaisesRegex(RamdiskError, "larger than the comparison limit"):
+            read_ramdisk_files(image, ("fstab.one", "fstab.two"), preview_limit_bytes=128)
+
+        binary_archive = cpio_archive([
+            ("fstab.one", b"\x00\x01\x02" * 8, 0o100640, 1, 1),
+            ("fstab.two", b"plain text\n", 0o100640, 2, 1),
+        ])
+        binary_image = self.root / "compare-binary.cpio.gz"
+        binary_image.write_bytes(gzip.compress(binary_archive))
+        with self.assertRaisesRegex(RamdiskError, "not recognized as text"):
+            read_ramdisk_files(binary_image, ("fstab.one", "fstab.two"))
+
+    def test_config_diff_rows_classify_added_deleted_modified_and_equal_lines(self) -> None:
+        rows = build_config_diff_rows(
+            "same\nold_value=1\nremove_me=1\nkeep\nend\n",
+            "same\nnew_value=2\nkeep\nadd_me=1\nend\n",
+        )
+        self.assertEqual(
+            [row["status"] for row in rows],
+            ["equal", "modified", "deleted", "equal", "added", "equal"],
+        )
+        self.assertEqual(rows[1]["old_text"], "old_value=1")
+        self.assertEqual(rows[1]["new_text"], "new_value=2")
+        self.assertEqual(rows[2]["old_text"], "remove_me=1")
+        self.assertEqual(rows[4]["new_text"], "add_me=1")
+
+    def test_config_diff_rows_normalize_line_endings(self) -> None:
+        rows = build_config_diff_rows("one\r\ntwo\r\n", "one\ntwo\n")
+        self.assertEqual([row["status"] for row in rows], ["equal", "equal"])
+
+    def test_read_ramdisk_files_requires_distinct_paths(self) -> None:
+        image = self.root / "empty.cpio.gz"
+        image.write_bytes(gzip.compress(self.cpio))
+        with self.assertRaisesRegex(RamdiskError, "Duplicate CPIO paths"):
+            read_ramdisk_files(image, ("etc/fstab", "etc/fstab"))
 
     def test_preview_uses_text_hint_for_vendor_config_with_non_utf8_bytes(self) -> None:
         content = b"# vendor config\nkey=value-\xff\n"

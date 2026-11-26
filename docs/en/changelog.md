@@ -5,6 +5,8 @@
 - Added CPIO newc/crc parsing, crc checksum validation, concatenated archive overlays, and built-in decompression for gzip, bzip2, XZ, LZMA-alone, and LZ4 frame/legacy. Zstandard and LZO/lzop are detected but not decompressed.
 - Added bounded extraction, unsafe-path rejection, symlink/special-file manifests, JSON reports, and a bilingual GUI with background work and cancellation.
 - Added Ramdisk tests and English/Russian documentation.
+- Added GUI side-by-side line comparison for two configuration files from the current Ramdisk. Added lines are highlighted green, deleted lines red, modified line pairs amber, and unchanged lines stay unhighlighted.
+- Added `read_ramdisk_files` to read both selected entries in one CPIO expansion pass. Comparisons are limited to 256 KiB per file and reject binary or truncated inputs.
 - Expanded Kernel compression-signature hints to gzip, bzip2, XZ, Zstandard, LZ4 frame/legacy, LZO/lzop, and LZMA, while retaining architecture-specific ARM64/ARM32/x86 header detection.
 - Parse the 64-byte AVB footer at the end of boot/vendor_boot images: report footer version, original image size, VBMeta offset/size, `AVB0` header presence, reserved-byte state, structural range status, and a breakdown of unclassified trailing regions. This does not verify VBMeta digests or signatures.
 - Added the read-only `boot-info` CLI command and Boot Image Inspector in the GUI Tools menu. It parses legacy Android boot headers v0–v2, generic boot headers v3–v4, and `vendor_boot` v3–v4, including component ranges, OS/build fields, kernel and ramdisk format hints, vendor ramdisk fragments, and bootconfig.

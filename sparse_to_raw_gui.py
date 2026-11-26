@@ -40,7 +40,10 @@ from batch_profiles import BatchProfileError, load_batch_profile, save_batch_pro
 from super_image import inspect_super_image, extract_super_partitions, SuperImageCancelled
 from avb_inspector import inspect_vbmeta_image
 from boot_inspector import inspect_boot_image
-from ramdisk_inspector import inspect_ramdisk, extract_ramdisk, read_ramdisk_file
+from ramdisk_inspector import (
+    MAX_TEXT_PREVIEW_BYTES, inspect_ramdisk, extract_ramdisk,
+    read_ramdisk_file, read_ramdisk_files, build_config_diff_rows,
+)
 
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QFrame,
@@ -192,6 +195,17 @@ I18N: dict[str, dict[str, str]] = {
         "ramdisk_preview_empty": "Файл пуст.", "ramdisk_preview_done": "Предпросмотр: {path}",
         "ramdisk_preview_source_missing": "Исходный образ недоступен. Выбери существующий файл и повтори просмотр.",
         "ramdisk_preview_error": "Не удалось показать файл",
+        "ramdisk_compare_button": "Сравнить конфиги…",
+        "ramdisk_compare_title": "Сравнение конфигурационных файлов",
+        "ramdisk_compare_select_title": "Выберите два файла для сравнения",
+        "ramdisk_compare_first": "Первый файл", "ramdisk_compare_second": "Второй файл",
+        "ramdisk_compare_ready": "Сравнение: {first} → {second}",
+        "ramdisk_compare_error": "Не удалось сравнить конфигурационные файлы",
+        "ramdisk_diff_old_line": "Старая строка", "ramdisk_diff_new_line": "Новая строка",
+        "ramdisk_diff_summary": "Добавлено: {added} · Удалено: {deleted} · Изменено: {modified} · Без изменений: {equal}",
+        "ramdisk_diff_added": "Добавлено", "ramdisk_diff_deleted": "Удалено",
+        "ramdisk_diff_modified": "Изменено", "ramdisk_diff_unchanged": "Без изменений",
+        "ramdisk_diff_close": "Закрыть",
         "ramdisk_busy": "Операция Ramdisk выполняется…", "ramdisk_select_paths": "Выбери одну или несколько строк для извлечения.",
         "ramdisk_extract_done": "Извлечение завершено.\nФайлов: {files}\nКаталогов: {dirs}\nСсылок в манифесте: {links}\nКаталог: {path}",
         "ramdisk_export_saved": "Отчёт Ramdisk сохранён:\n{path}",
@@ -472,6 +486,17 @@ I18N: dict[str, dict[str, str]] = {
         "ramdisk_preview_empty": "The file is empty.", "ramdisk_preview_done": "Preview: {path}",
         "ramdisk_preview_source_missing": "The source image is unavailable. Select an existing file and try again.",
         "ramdisk_preview_error": "Could not preview file",
+        "ramdisk_compare_button": "Compare configs…",
+        "ramdisk_compare_title": "Configuration file comparison",
+        "ramdisk_compare_select_title": "Choose two files to compare",
+        "ramdisk_compare_first": "First file", "ramdisk_compare_second": "Second file",
+        "ramdisk_compare_ready": "Comparing: {first} → {second}",
+        "ramdisk_compare_error": "Could not compare configuration files",
+        "ramdisk_diff_old_line": "Old line", "ramdisk_diff_new_line": "New line",
+        "ramdisk_diff_summary": "Added: {added} · Removed: {deleted} · Modified: {modified} · Unchanged: {equal}",
+        "ramdisk_diff_added": "Added", "ramdisk_diff_deleted": "Removed",
+        "ramdisk_diff_modified": "Modified", "ramdisk_diff_unchanged": "Unchanged",
+        "ramdisk_diff_close": "Close",
         "ramdisk_busy": "Ramdisk operation is running…", "ramdisk_select_paths": "Select one or more rows to extract.",
         "ramdisk_extract_done": "Extraction completed.\nFiles: {files}\nDirectories: {dirs}\nLinks in manifest: {links}\nDirectory: {path}",
         "ramdisk_export_saved": "Ramdisk report saved:\n{path}",
@@ -3640,6 +3665,141 @@ class BootImageInspectorDialog(QDialog):
         QMessageBox.information(self, self.windowTitle(), self.main.t("boot_report_saved").format(path=destination))
 
 
+class RamdiskCompareSelectDialog(QDialog):
+    """Choose two configuration files from the inspected CPIO inventory."""
+
+    def __init__(self, parent: "RamdiskInspectorDialog", paths: list[str]) -> None:
+        super().__init__(parent)
+        self.main = parent.main
+        self.setWindowTitle(self.main.t("ramdisk_compare_select_title"))
+        self.setMinimumWidth(560)
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self.first_combo = QComboBox()
+        self.second_combo = QComboBox()
+        for path in paths:
+            self.first_combo.addItem(path, path)
+            self.second_combo.addItem(path, path)
+        if len(paths) > 1:
+            self.second_combo.setCurrentIndex(1)
+        self.first_combo.currentIndexChanged.connect(self._update_ok_button)
+        self.second_combo.currentIndexChanged.connect(self._update_ok_button)
+        form.addRow(self.main.t("ramdisk_compare_first"), self.first_combo)
+        form.addRow(self.main.t("ramdisk_compare_second"), self.second_combo)
+        layout.addLayout(form)
+        self.button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        layout.addWidget(self.button_box)
+        self._update_ok_button()
+
+    @property
+    def selected_paths(self) -> tuple[str, str]:
+        return str(self.first_combo.currentData()), str(self.second_combo.currentData())
+
+    def _update_ok_button(self, *_args) -> None:
+        ok_button = self.button_box.button(QDialogButtonBox.StandardButton.Ok)
+        ok_button.setEnabled(
+            bool(self.first_combo.currentData())
+            and bool(self.second_combo.currentData())
+            and self.first_combo.currentData() != self.second_combo.currentData()
+        )
+
+
+class RamdiskConfigDiffDialog(QDialog):
+    """Display added, removed and modified config lines in aligned columns."""
+
+    STATUS_COLORS = {
+        "added": "#183a2a",
+        "deleted": "#3b2028",
+        "modified": "#3b321c",
+    }
+
+    def __init__(self, parent: QWidget, old_file: dict[str, Any], new_file: dict[str, Any],
+                 diff_rows: list[dict[str, Any]] | None = None) -> None:
+        super().__init__(parent)
+        self.main = parent.main if hasattr(parent, "main") else parent
+        old_path = str(old_file.get("path", ""))
+        new_path = str(new_file.get("path", ""))
+        self.setWindowTitle(self.main.t("ramdisk_compare_title"))
+        self.resize(1160, 720)
+        self.setMinimumSize(820, 480)
+        old_text = str(old_file.get("text_preview") or "")
+        new_text = str(new_file.get("text_preview") or "")
+        # The worker normally supplies precomputed rows so potentially expensive
+        # SequenceMatcher work never blocks the GUI thread. The fallback keeps the
+        # dialog convenient for tests and internal callers.
+        self.diff_rows = diff_rows if diff_rows is not None else build_config_diff_rows(old_text, new_text)
+        counts = {key: sum(row["status"] == key for row in self.diff_rows)
+                  for key in ("added", "deleted", "modified", "equal")}
+
+        root = QVBoxLayout(self)
+        paths_label = QLabel(f"{old_path}  →  {new_path}")
+        paths_label.setWordWrap(True)
+        paths_label.setObjectName("panelHeading")
+        root.addWidget(paths_label)
+        summary = QLabel(self.main.t("ramdisk_diff_summary").format(**counts))
+        summary.setObjectName("panelHeading")
+        root.addWidget(summary)
+
+        legend = QHBoxLayout()
+        for key in ("added", "deleted", "modified", "unchanged"):
+            label = QLabel(self.main.t(f"ramdisk_diff_{key}"))
+            color_key = "equal" if key == "unchanged" else key
+            color = self.STATUS_COLORS.get(color_key, "transparent")
+            label.setStyleSheet(
+                f"background-color: {color}; border: 1px solid #52616b; "
+                "border-radius: 3px; padding: 3px 8px;"
+            )
+            legend.addWidget(label)
+        legend.addStretch(1)
+        root.addLayout(legend)
+
+        self.table = QTableWidget(len(self.diff_rows), 4)
+        self.table.setHorizontalHeaderLabels([
+            "№", self.main.t("ramdisk_diff_old_line"),
+            "№", self.main.t("ramdisk_diff_new_line"),
+        ])
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setWordWrap(False)
+        self.table.verticalHeader().setVisible(False)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        for row_index, row in enumerate(self.diff_rows):
+            self._set_cell(row_index, 0, row["old_number"], row["status"])
+            old_status = row["status"] if row["status"] in {"deleted", "modified"} else "equal"
+            new_status = row["status"] if row["status"] in {"added", "modified"} else "equal"
+            self._set_cell(row_index, 1, row["old_text"], old_status)
+            self._set_cell(row_index, 2, row["new_number"], row["status"])
+            self._set_cell(row_index, 3, row["new_text"], new_status)
+        root.addWidget(self.table, 1)
+
+        close_button = QPushButton(self.main.t("ramdisk_diff_close"))
+        close_button.setIcon(self.main.icon_for("SP_DialogCloseButton"))
+        close_button.clicked.connect(self.accept)
+        close_row = QHBoxLayout()
+        close_row.addStretch(1)
+        close_row.addWidget(close_button)
+        root.addLayout(close_row)
+
+    def _set_cell(self, row: int, column: int, value: object, status: str) -> None:
+        item = QTableWidgetItem("" if value is None else str(value))
+        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        color = self.STATUS_COLORS.get(status)
+        if color:
+            item.setBackground(QColor(color))
+        if column in (0, 2):
+            item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.table.setItem(row, column, item)
+
+
 class RamdiskWorker(QObject):
     """Run bounded Ramdisk inspection or extraction away from the GUI thread."""
 
@@ -3649,7 +3809,8 @@ class RamdiskWorker(QObject):
 
     def __init__(self, action: str, source: Path, *, fragment_index: int | None,
                  max_unpacked_bytes: int, output_dir: Path | None = None,
-                 include_paths: set[str] | None = None, selected_path: str | None = None) -> None:
+                 include_paths: set[str] | None = None, selected_path: str | None = None,
+                 compare_paths: tuple[str, str] | None = None) -> None:
         super().__init__()
         self.action = action
         self.source = source
@@ -3658,6 +3819,7 @@ class RamdiskWorker(QObject):
         self.output_dir = output_dir
         self.include_paths = include_paths
         self.selected_path = selected_path
+        self.compare_paths = compare_paths
         self._cancel_event = threading.Event()
 
     def request_cancel(self) -> None:
@@ -3685,6 +3847,22 @@ class RamdiskWorker(QObject):
                     max_unpacked_bytes=self.max_unpacked_bytes,
                     cancel_requested=self._cancel_event.is_set,
                 )
+            elif self.action == "compare" and self.compare_paths is not None:
+                files = read_ramdisk_files(
+                    self.source, self.compare_paths, fragment_index=self.fragment_index,
+                    max_unpacked_bytes=self.max_unpacked_bytes,
+                    preview_limit_bytes=MAX_TEXT_PREVIEW_BYTES,
+                    cancel_requested=self._cancel_event.is_set,
+                )
+                result = {
+                    "operation": "android-ramdisk-config-compare",
+                    "input": str(self.source),
+                    "files": files,
+                    "diff_rows": build_config_diff_rows(
+                        files[0].get("text_preview") or "",
+                        files[1].get("text_preview") or "",
+                    ),
+                }
             else:
                 raise ValueError("Invalid Ramdisk worker operation")
         except Exception as exc:
@@ -3709,6 +3887,7 @@ class RamdiskInspectorDialog(QDialog):
         self._preview_loaded_path: str | None = None
         self._preview_loading_path: str | None = None
         self._populating_report = False
+        self._diff_dialogs: dict[int, RamdiskConfigDiffDialog] = {}
         self.setWindowTitle(parent.t("ramdisk_title"))
         self.resize(1040, 720)
         self.setMinimumSize(840, 580)
@@ -3766,6 +3945,11 @@ class RamdiskInspectorDialog(QDialog):
         self.preview_button.setEnabled(False)
         self.preview_button.clicked.connect(self._preview_selected)
         action_row.addWidget(self.preview_button)
+        self.compare_configs_button = QPushButton(parent.t("ramdisk_compare_button"))
+        self.compare_configs_button.setIcon(parent.icon_for("SP_FileDialogDetailedView"))
+        self.compare_configs_button.setEnabled(False)
+        self.compare_configs_button.clicked.connect(self._compare_configs)
+        action_row.addWidget(self.compare_configs_button)
         action_row.addStretch(1)
         root.addLayout(action_row)
 
@@ -3898,12 +4082,14 @@ class RamdiskInspectorDialog(QDialog):
         self.summary.setText(self.main.t("ramdisk_ready"))
         self.export_button.setEnabled(False)
         self.preview_button.setEnabled(False)
+        self.compare_configs_button.setEnabled(False)
         self.extract_selected_button.setEnabled(False)
         self.extract_all_button.setEnabled(False)
 
     def _start_worker(self, action: str, *, output_dir: Path | None = None,
                       include_paths: set[str] | None = None,
-                      selected_path: str | None = None) -> None:
+                      selected_path: str | None = None,
+                      compare_paths: tuple[str, str] | None = None) -> None:
         source_text = self.source_edit.text().strip()
         if not source_text:
             QMessageBox.warning(self, self.windowTitle(), self.main.t("ramdisk_ready"))
@@ -3920,7 +4106,8 @@ class RamdiskInspectorDialog(QDialog):
         self.worker = RamdiskWorker(
             action, source, fragment_index=fragment_index,
             max_unpacked_bytes=self.limit_spin.value() * 1024 * 1024,
-            output_dir=output_dir, include_paths=include_paths, selected_path=selected_path,
+            output_dir=output_dir, include_paths=include_paths,
+            selected_path=selected_path, compare_paths=compare_paths,
         )
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
@@ -3934,7 +4121,8 @@ class RamdiskInspectorDialog(QDialog):
 
     def _set_busy(self, busy: bool) -> None:
         for widget in (self.source_edit, self.browse_button, self.inspect_button, self.export_button,
-                       self.preview_button, self.search_edit, self.filter_combo, self.table,
+                       self.preview_button, self.compare_configs_button,
+                       self.search_edit, self.filter_combo, self.table,
                        self.extract_selected_button, self.extract_all_button,
                        self.fragment_check, self.fragment_spin, self.limit_spin):
             widget.setEnabled(not busy and (widget is not self.export_button or self.report is not None)
@@ -3946,6 +4134,9 @@ class RamdiskInspectorDialog(QDialog):
                           if selected_rows and self.table.item(selected_rows[0], 0) else None)
         self.preview_button.setEnabled(
             not busy and isinstance(selected_entry, dict) and selected_entry.get("type") == "file"
+        )
+        self.compare_configs_button.setEnabled(
+            not busy and self.report is not None and len(self._config_file_paths()) >= 2
         )
         self.cancel_button.setEnabled(busy)
         self.close_button.setEnabled(not busy)
@@ -3990,6 +4181,22 @@ class RamdiskInspectorDialog(QDialog):
                 )
             self.details_tabs.setCurrentWidget(self.preview_page)
             self.summary.setText(self.main.t("ramdisk_preview_done").format(path=result.get("path", "")))
+        elif self._active_action == "compare":
+            files = result.get("files", [])
+            if len(files) == 2:
+                diff_dialog = RamdiskConfigDiffDialog(
+                    self, files[0], files[1], diff_rows=result.get("diff_rows")
+                )
+                diff_dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+                dialog_key = id(diff_dialog)
+                self._diff_dialogs[dialog_key] = diff_dialog
+                diff_dialog.destroyed.connect(
+                    lambda *_args, key=dialog_key: self._diff_dialogs.pop(key, None)
+                )
+                diff_dialog.show()
+                self.summary.setText(self.main.t("ramdisk_compare_ready").format(
+                    first=files[0].get("path", ""), second=files[1].get("path", "")
+                ))
         else:
             if not self._close_when_finished:
                 QMessageBox.information(
@@ -4022,7 +4229,11 @@ class RamdiskInspectorDialog(QDialog):
             return
         self.summary.setText(self.main.t("ramdisk_error"))
         if not self._close_when_finished:
-            QMessageBox.critical(self, self.windowTitle(), message)
+            title = (self.main.t("ramdisk_compare_title")
+                     if self._active_action == "compare" else self.windowTitle())
+            prefix = (f"{self.main.t('ramdisk_compare_error')}:\n"
+                      if self._active_action == "compare" else "")
+            QMessageBox.critical(self, title, prefix + message)
 
     @Slot()
     def _worker_thread_finished(self) -> None:
@@ -4067,6 +4278,7 @@ class RamdiskInspectorDialog(QDialog):
         self.export_button.setEnabled(True)
         self.extract_all_button.setEnabled(True)
         self.extract_selected_button.setEnabled(False)
+        self.compare_configs_button.setEnabled(len(self._config_file_paths()) >= 2)
         details = {key: value for key, value in report.items() if key != "entries"}
         details["entries_preview"] = report.get("entries", [])[:30]
         details["display_note"] = self.main.t("ramdisk_symlink_note")
@@ -4079,6 +4291,28 @@ class RamdiskInspectorDialog(QDialog):
         self._apply_filters()
         self.main.last_result = report
         self.main.report_button.setEnabled(True)
+
+    def _config_file_paths(self) -> list[str]:
+        if not isinstance(self.report, dict):
+            return []
+        paths = {
+            str(entry.get("path", ""))
+            for entry in self.report.get("entries", [])
+            if isinstance(entry, dict)
+            and entry.get("type") == "file"
+            and self._is_config_entry(entry)
+            and entry.get("path")
+        }
+        return sorted(paths, key=str.casefold)
+
+    def _compare_configs(self) -> None:
+        paths = self._config_file_paths()
+        if len(paths) < 2:
+            return
+        selector = RamdiskCompareSelectDialog(self, paths)
+        if selector.exec() != QDialog.DialogCode.Accepted:
+            return
+        self._start_worker("compare", compare_paths=selector.selected_paths)
 
     @staticmethod
     def _is_config_entry(entry: dict[str, Any]) -> bool:

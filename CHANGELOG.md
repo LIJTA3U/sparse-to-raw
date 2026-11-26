@@ -8,6 +8,8 @@
 - Added case-insensitive CPIO path search and category filters for all entries, files, directories, symlinks, executables, and likely configuration files.
 - Added bounded text-file preview (up to 256 KiB), HEX preview for binary entries, and visible UID/GID columns; selecting a regular file now opens its preview automatically. Android configuration paths such as `fstab.mt6765` receive text-oriented decoding, including replacement for vendor-specific non-UTF-8 bytes.
 - Added a read-only `read_ramdisk_file` API for bounded previews without materializing CPIO paths in the destination filesystem.
+- Added GUI comparison of two Ramdisk configuration files, including side-by-side line alignment and distinct highlighting for added, deleted, and modified lines. The two files are read from one expanded CPIO archive in a background worker; comparisons are bounded to 256 KiB per file.
+- Added `read_ramdisk_files` to read multiple CPIO entries in one archive pass, plus regression tests for two-file reads, truncation, binary content, and GUI diff classification.
 - Added Ramdisk unit tests and bilingual CLI, GUI, and format/limitation documentation.
 - Made compressed Kernel formats explicit in the Boot Image Inspector table (for example, `Kernel (GZIP)`) and added separate, clearly named rows for unclassified bytes before and after VBMeta, with byte-range details and tooltips. Added bilingual GUI regression coverage for these rows.
 - Expanded Kernel compression-signature hints to gzip, bzip2, XZ, Zstandard, LZ4 frame/legacy, LZO/lzop, and LZMA, while retaining architecture-specific ARM64/ARM32/x86 header detection.
@@ -195,5 +197,3 @@ Added a dedicated QFIL XML GUI workflow accessible from the main toolbar and Bat
 - Added streaming RAW → Android Sparse v1.0 encoding in the standard-library CLI.
 - Added configurable block size, `RAW`/`FILL`/`DONT_CARE` chunk selection, CRC32, optional SHA-256, atomic output and JSON summary.
 - Added RAW → Sparse round-trip and validation tests.
-
-- Fixed Ramdisk Inspector configuration filtering so the executable `init` binary is not classified as a configuration file; `init.rc`, `fstab`, and named fstab variants remain recognized.

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import bz2
+import difflib
 import gzip
 import hashlib
 import io
@@ -720,6 +721,152 @@ def _is_likely_text_config_path(cpio_path: str) -> bool:
     )
 
 
+def build_config_diff_rows(old_text: str, new_text: str) -> list[dict[str, Any]]:
+    """Build aligned line-by-line rows for a two-column configuration diff.
+
+    Line endings are normalized by ``splitlines``. Replacements are paired in
+    order and marked as modified; excess lines in either block remain explicit
+    additions or deletions.
+    """
+    old_lines = old_text.splitlines()
+    new_lines = new_text.splitlines()
+    matcher = difflib.SequenceMatcher(a=old_lines, b=new_lines)
+    rows: list[dict[str, Any]] = []
+
+    def append(status: str, old_index: int | None, new_index: int | None) -> None:
+        rows.append({
+            "status": status,
+            "old_number": old_index + 1 if old_index is not None else None,
+            "old_text": old_lines[old_index] if old_index is not None else "",
+            "new_number": new_index + 1 if new_index is not None else None,
+            "new_text": new_lines[new_index] if new_index is not None else "",
+        })
+
+    for tag, old_start, old_end, new_start, new_end in matcher.get_opcodes():
+        if tag == "equal":
+            for offset in range(old_end - old_start):
+                append("equal", old_start + offset, new_start + offset)
+        elif tag == "delete":
+            for old_index in range(old_start, old_end):
+                append("deleted", old_index, None)
+        elif tag == "insert":
+            for new_index in range(new_start, new_end):
+                append("added", None, new_index)
+        elif tag == "replace":
+            paired = min(old_end - old_start, new_end - new_start)
+            for offset in range(paired):
+                append("modified", old_start + offset, new_start + offset)
+            for old_index in range(old_start + paired, old_end):
+                append("deleted", old_index, None)
+            for new_index in range(new_start + paired, new_end):
+                append("added", None, new_index)
+    return rows
+
+
+def _read_ramdisk_file_from_report(
+    path: Path,
+    cpio_path: str,
+    report: dict[str, Any],
+    temp_dir: tempfile.TemporaryDirectory[str],
+    *,
+    preview_limit_bytes: int,
+) -> dict[str, Any]:
+    """Read one regular file from an already prepared CPIO report."""
+    if not isinstance(cpio_path, str) or not cpio_path or _unsafe_path(cpio_path):
+        raise RamdiskError(f"Unsafe or empty CPIO path rejected: {cpio_path!r}")
+
+    requested = _normalize_cpio_path(cpio_path)
+    # CPIO archives can be concatenated; the last entry for a path wins.
+    final_entries: dict[str, dict[str, Any]] = {}
+    for entry in report["entries"]:
+        final_entries[_normalize_cpio_path(entry["path"])] = entry
+    entry = final_entries.get(requested)
+    if entry is None:
+        raise RamdiskError(f"CPIO path not found: {cpio_path}")
+    if entry.get("unsafe_path"):
+        raise RamdiskError(f"Unsafe CPIO path cannot be previewed: {cpio_path!r}")
+    if entry.get("type") != "file":
+        raise RamdiskError(f"Only regular files can be previewed: {cpio_path!r}")
+
+    data_offset = int(entry["data_offset_bytes"])
+    data_size = int(entry["size_bytes"])
+    if data_size == 0 and int(entry.get("nlink", 1)) > 1:
+        key = (entry["devmajor"], entry["devminor"], entry["inode"])
+        linked = next((
+            candidate for candidate in reversed(report["entries"])
+            if candidate.get("type") == "file"
+            and (candidate["devmajor"], candidate["devminor"], candidate["inode"]) == key
+            and int(candidate.get("size_bytes", 0)) > 0
+        ), None)
+        if linked is not None:
+            data_offset = int(linked["data_offset_bytes"])
+            data_size = int(linked["size_bytes"])
+
+    preview_size = min(data_size, preview_limit_bytes)
+    unpacked_path = Path(temp_dir.name) / "ramdisk.cpio"
+    with unpacked_path.open("rb") as stream:
+        stream.seek(data_offset)
+        data = stream.read(preview_size)
+    if len(data) != preview_size:
+        raise RamdiskError(f"Unexpected end of CPIO data while previewing {cpio_path!r}")
+
+    encoding = "utf-8"
+    text_data = data
+    utf16_bom = False
+    if data.startswith(b"\xef\xbb\xbf"):
+        encoding, text_data = "utf-8-sig", data
+    elif data.startswith(b"\xff\xfe"):
+        encoding, utf16_bom = "utf-16-le", True
+    elif data.startswith(b"\xfe\xff"):
+        encoding, utf16_bom = "utf-16-be", True
+
+    probe = text_data[:8192]
+    has_nul = b"\x00" in probe and not utf16_bom
+    control_count = sum(1 for byte in probe if byte < 9 or 13 < byte < 32)
+    # Android fstab/init/property files are text by convention. Some vendor
+    # builds contain non-UTF-8 bytes or unusual control characters in comments;
+    # still show them as text with replacement characters instead of silently
+    # treating them as binary. NUL bytes remain a strong binary indicator.
+    config_path_hint = _is_likely_text_config_path(requested)
+    is_text = utf16_bom or (
+        not has_nul and (
+            config_path_hint
+            or not probe
+            or control_count <= max(1, len(probe) // 100)
+        )
+    )
+    text_preview: str | None = None
+    hex_preview: str | None = None
+    if is_text:
+        try:
+            text_preview = data.decode(encoding)
+        except UnicodeDecodeError:
+            try:
+                text_preview = data.decode("utf-8", errors="replace")
+                encoding = "utf-8 (replacement characters)"
+            except Exception:
+                is_text = False
+    if not is_text:
+        hex_preview = " ".join(f"{byte:02X}" for byte in data[:512])
+
+    return {
+        "operation": "android-ramdisk-preview",
+        "input": str(path),
+        "path": requested,
+        "type": entry["type"],
+        "size_bytes": data_size,
+        "preview_bytes": len(data),
+        "truncated": data_size > len(data),
+        "is_text": is_text,
+        "encoding": encoding if is_text else None,
+        "text_detection_hint": config_path_hint,
+        "text_preview": text_preview,
+        "hex_preview": hex_preview,
+        "fragment_index": report.get("fragment_index"),
+        "compression_format": report.get("compression_format"),
+    }
+
+
 def read_ramdisk_file(
     image_path: str | os.PathLike[str], cpio_path: str, *,
     fragment_index: int | None = None,
@@ -736,105 +883,69 @@ def read_ramdisk_file(
     path = Path(image_path).expanduser().resolve()
     if not path.is_file():
         raise FileNotFoundError(f"Ramdisk image not found: {path}")
-    if not isinstance(cpio_path, str) or not cpio_path or _unsafe_path(cpio_path):
-        raise RamdiskError(f"Unsafe or empty CPIO path rejected: {cpio_path!r}")
     if preview_limit_bytes <= 0 or preview_limit_bytes > 2 * 1024 * 1024:
         raise RamdiskError("preview_limit_bytes must be between 1 and 2 MiB")
 
-    requested = _normalize_cpio_path(cpio_path)
     report, temp_dir = _prepare_report(
         path, fragment_index, max_unpacked_bytes, cancel_requested
     )
     try:
-        # CPIO archives can be concatenated; the last entry for a path wins.
-        final_entries: dict[str, dict[str, Any]] = {}
-        for entry in report["entries"]:
-            final_entries[_normalize_cpio_path(entry["path"])] = entry
-        entry = final_entries.get(requested)
-        if entry is None:
-            raise RamdiskError(f"CPIO path not found: {cpio_path}")
-        if entry.get("unsafe_path"):
-            raise RamdiskError(f"Unsafe CPIO path cannot be previewed: {cpio_path!r}")
-        if entry.get("type") != "file":
-            raise RamdiskError(f"Only regular files can be previewed: {cpio_path!r}")
-
-        data_offset = int(entry["data_offset_bytes"])
-        data_size = int(entry["size_bytes"])
-        if data_size == 0 and int(entry.get("nlink", 1)) > 1:
-            key = (entry["devmajor"], entry["devminor"], entry["inode"])
-            linked = next((candidate for candidate in reversed(report["entries"])
-                           if candidate.get("type") == "file"
-                           and (candidate["devmajor"], candidate["devminor"], candidate["inode"]) == key
-                           and int(candidate.get("size_bytes", 0)) > 0), None)
-            if linked is not None:
-                data_offset = int(linked["data_offset_bytes"])
-                data_size = int(linked["size_bytes"])
-
-        preview_size = min(data_size, preview_limit_bytes)
         if cancel_requested is not None and cancel_requested():
             raise RamdiskCancelled("Ramdisk operation cancelled")
-        unpacked_path = Path(temp_dir.name) / "ramdisk.cpio"
-        with unpacked_path.open("rb") as stream:
-            stream.seek(data_offset)
-            data = stream.read(preview_size)
-        if len(data) != preview_size:
-            raise RamdiskError(f"Unexpected end of CPIO data while previewing {cpio_path!r}")
-
-        encoding = "utf-8"
-        text_data = data
-        utf16_bom = False
-        if data.startswith(b"\xef\xbb\xbf"):
-            encoding, text_data = "utf-8-sig", data
-        elif data.startswith(b"\xff\xfe"):
-            encoding, utf16_bom = "utf-16-le", True
-        elif data.startswith(b"\xfe\xff"):
-            encoding, utf16_bom = "utf-16-be", True
-
-        probe = text_data[:8192]
-        has_nul = b"\x00" in probe and not utf16_bom
-        control_count = sum(1 for byte in probe if byte < 9 or 13 < byte < 32)
-        # Android fstab/init/property files are text by convention. Some vendor
-        # builds contain non-UTF-8 bytes or unusual control characters in comments;
-        # still show them as text with replacement characters instead of silently
-        # treating the file as binary. NUL bytes remain a strong binary indicator.
-        config_path_hint = _is_likely_text_config_path(requested)
-        is_text = utf16_bom or (
-            not has_nul and (
-                config_path_hint
-                or not probe
-                or control_count <= max(1, len(probe) // 100)
-            )
+        return _read_ramdisk_file_from_report(
+            path, cpio_path, report, temp_dir, preview_limit_bytes=preview_limit_bytes,
         )
-        text_preview: str | None = None
-        hex_preview: str | None = None
-        if is_text:
-            try:
-                text_preview = data.decode(encoding)
-            except UnicodeDecodeError:
-                try:
-                    text_preview = data.decode("utf-8", errors="replace")
-                    encoding = "utf-8 (replacement characters)"
-                except Exception:
-                    is_text = False
-        if not is_text:
-            hex_preview = " ".join(f"{byte:02X}" for byte in data[:512])
+    finally:
+        temp_dir.cleanup()
 
-        return {
-            "operation": "android-ramdisk-preview",
-            "input": str(path),
-            "path": requested,
-            "type": entry["type"],
-            "size_bytes": data_size,
-            "preview_bytes": len(data),
-            "truncated": data_size > len(data),
-            "is_text": is_text,
-            "encoding": encoding if is_text else None,
-            "text_detection_hint": config_path_hint,
-            "text_preview": text_preview,
-            "hex_preview": hex_preview,
-            "fragment_index": report.get("fragment_index"),
-            "compression_format": report.get("compression_format"),
-        }
+
+def read_ramdisk_files(
+    image_path: str | os.PathLike[str], cpio_paths: list[str] | tuple[str, ...], *,
+    fragment_index: int | None = None,
+    max_unpacked_bytes: int = MAX_UNPACKED_BYTES,
+    preview_limit_bytes: int = MAX_TEXT_PREVIEW_BYTES,
+    cancel_requested: Callable[[], bool] | None = None,
+) -> list[dict[str, Any]]:
+    """Read multiple regular CPIO files while expanding the source archive once.
+
+    This is used by the GUI configuration comparison workflow. All requested
+    files share one private expanded CPIO archive, so reading two files does not
+    decompress the ramdisk twice. The return order matches ``cpio_paths``.
+    """
+    paths = list(cpio_paths)
+    if len(paths) < 2:
+        raise RamdiskError("At least two CPIO paths are required")
+    if any(not isinstance(item, str) or not item for item in paths):
+        raise RamdiskError("CPIO paths must be non-empty strings")
+    normalized_paths = [_normalize_cpio_path(item.replace("\\", "/")) for item in paths]
+    if len(normalized_paths) != len(set(normalized_paths)):
+        raise RamdiskError("Duplicate CPIO paths cannot be compared")
+    path = Path(image_path).expanduser().resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"Ramdisk image not found: {path}")
+    if preview_limit_bytes <= 0 or preview_limit_bytes > 2 * 1024 * 1024:
+        raise RamdiskError("preview_limit_bytes must be between 1 and 2 MiB")
+
+    report, temp_dir = _prepare_report(
+        path, fragment_index, max_unpacked_bytes, cancel_requested
+    )
+    try:
+        results: list[dict[str, Any]] = []
+        for cpio_path in paths:
+            if cancel_requested is not None and cancel_requested():
+                raise RamdiskCancelled("Ramdisk operation cancelled")
+            result = _read_ramdisk_file_from_report(
+                path, cpio_path, report, temp_dir, preview_limit_bytes=preview_limit_bytes,
+            )
+            if result.get("truncated"):
+                raise RamdiskError(
+                    f"Configuration file is larger than the comparison limit "
+                    f"({preview_limit_bytes:,} bytes): {cpio_path}"
+                )
+            if not result.get("is_text") or result.get("text_preview") is None:
+                raise RamdiskError(f"Selected file is not recognized as text: {cpio_path}")
+            results.append(result)
+        return results
     finally:
         temp_dir.cleanup()
 
