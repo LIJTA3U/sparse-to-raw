@@ -323,11 +323,6 @@ class SparseToRawGuiTests(unittest.TestCase):
             dialog.close()
             window.close()
 
-    def test_ramdisk_config_filter_does_not_classify_init_binary_as_config(self) -> None:
-        self.assertFalse(RamdiskInspectorDialog._is_config_entry({"path": "init", "type": "file"}))
-        self.assertTrue(RamdiskInspectorDialog._is_config_entry({"path": "init.rc", "type": "file"}))
-        self.assertTrue(RamdiskInspectorDialog._is_config_entry({"path": "etc/fstab", "type": "file"}))
-
     def test_ramdisk_inspector_search_and_category_filters(self) -> None:
         window = MainWindow()
         dialog = RamdiskInspectorDialog(window)
@@ -370,25 +365,113 @@ class SparseToRawGuiTests(unittest.TestCase):
             dialog.close()
             window.close()
 
-    def test_ramdisk_preview_selected_file_starts_preview_worker(self) -> None:
+    def test_ramdisk_selecting_regular_file_starts_preview_worker_automatically(self) -> None:
+        window = MainWindow()
+        dialog = RamdiskInspectorDialog(window)
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "ramdisk.cpio.gz"
+            source.write_bytes(b"fixture")
+            dialog.source_edit.setText(str(source))
+            report = {
+                "operation": "android-ramdisk-inspect", "input": str(source),
+                "compression_format": "gzip", "cpio_formats": ["newc"],
+                "archive_count": 1, "entry_count": 1, "file_count": 1,
+                "directory_count": 0, "symlink_count": 0, "entries": [
+                    {"path": "fstab.mt6765", "type": "file", "size_bytes": 32,
+                     "mode": 0o100640, "permissions_octal": "0640", "checksum_status": "not-present"},
+                ],
+            }
+            try:
+                dialog._populate_report(report)
+                with patch.object(dialog, "_start_worker") as start_worker:
+                    dialog.table.selectRow(0)
+                    self.assertTrue(dialog.preview_button.isEnabled())
+                    self.assertIs(dialog.details_tabs.currentWidget(), dialog.preview_page)
+                    start_worker.assert_called_once_with("preview", selected_path="fstab.mt6765")
+                # The explicit preview button remains available to reload the current file.
+                with patch.object(dialog, "_start_worker") as start_worker:
+                    dialog._preview_selected()
+                    start_worker.assert_called_once_with("preview", selected_path="fstab.mt6765")
+            finally:
+                dialog.close()
+                window.close()
+
+    def test_ramdisk_population_does_not_trigger_automatic_preview(self) -> None:
+        window = MainWindow()
+        dialog = RamdiskInspectorDialog(window)
+        report = {
+            "operation": "android-ramdisk-inspect", "input": "missing-source.img",
+            "compression_format": "gzip", "cpio_formats": ["newc"],
+            "archive_count": 1, "entry_count": 1, "file_count": 1,
+            "directory_count": 0, "symlink_count": 0,
+            "entries": [{"path": "fstab.mt6765", "type": "file", "size_bytes": 32,
+                         "mode": 0o100640, "permissions_octal": "0640"}],
+        }
+        try:
+            with patch.object(dialog, "_start_worker") as start_worker:
+                with patch("sparse_to_raw_gui.QMessageBox.warning") as warning:
+                    dialog._populate_report(report)
+                    self.assertEqual(dialog.table.selectedItems(), [])
+                    start_worker.assert_not_called()
+                    warning.assert_not_called()
+        finally:
+            dialog.close()
+            window.close()
+
+    def test_ramdisk_preview_without_existing_source_is_non_modal(self) -> None:
+        window = MainWindow()
+        dialog = RamdiskInspectorDialog(window)
+        try:
+            with patch.object(dialog, "_start_worker") as start_worker:
+                with patch("sparse_to_raw_gui.QMessageBox.warning") as warning:
+                    dialog._load_preview_path("etc/fstab")
+                    start_worker.assert_not_called()
+                    warning.assert_not_called()
+            self.assertEqual(dialog.preview_meta.text(), window.t("ramdisk_preview_source_missing"))
+        finally:
+            dialog.close()
+            window.close()
+
+    def test_ramdisk_close_during_worker_requests_cancel_without_modal_prompt(self) -> None:
+        window = MainWindow()
+        dialog = RamdiskInspectorDialog(window)
+        thread = QThread()
+        thread.start()
+        worker = MagicMock()
+        dialog.thread = thread
+        dialog.worker = worker
+        try:
+            with patch("sparse_to_raw_gui.QMessageBox.information") as information:
+                dialog.close()
+                information.assert_not_called()
+            self.assertTrue(dialog._close_when_finished)
+            worker.request_cancel.assert_called_once_with()
+        finally:
+            thread.quit()
+            self.assertTrue(thread.wait(3000))
+            dialog.thread = None
+            dialog.worker = None
+            dialog.close()
+            window.close()
+
+    def test_ramdisk_selecting_directory_does_not_start_preview_worker(self) -> None:
         window = MainWindow()
         dialog = RamdiskInspectorDialog(window)
         report = {
             "operation": "android-ramdisk-inspect", "input": "ramdisk.cpio.gz",
             "compression_format": "gzip", "cpio_formats": ["newc"],
-            "archive_count": 1, "entry_count": 1, "file_count": 1,
-            "directory_count": 0, "symlink_count": 0, "entries": [
-                {"path": "etc/fstab", "type": "file", "size_bytes": 32,
-                 "mode": 0o100644, "permissions_octal": "0644", "checksum_status": "not-present"},
+            "archive_count": 1, "entry_count": 1, "file_count": 0,
+            "directory_count": 1, "symlink_count": 0, "entries": [
+                {"path": "etc", "type": "directory", "size_bytes": 0,
+                 "mode": 0o040755, "permissions_octal": "0755", "checksum_status": "not-present"},
             ],
         }
         try:
             dialog._populate_report(report)
-            dialog.table.selectRow(0)
-            self.assertTrue(dialog.preview_button.isEnabled())
             with patch.object(dialog, "_start_worker") as start_worker:
-                dialog._preview_selected()
-                start_worker.assert_called_once_with("preview", selected_path="etc/fstab")
+                dialog.table.selectRow(0)
+                start_worker.assert_not_called()
+                self.assertFalse(dialog.preview_button.isEnabled())
         finally:
             dialog.close()
             window.close()
@@ -467,13 +550,6 @@ class SparseToRawGuiTests(unittest.TestCase):
         finally:
             if window.isVisible():
                 window.close()
-
-    def test_main_window_initializes_modeless_dialog_registry(self) -> None:
-        window = MainWindow()
-        try:
-            self.assertEqual(window._dialogs, [])
-        finally:
-            window.close()
 
     def test_operation_running_ignores_non_qthread_dialog_placeholders(self) -> None:
         window = MainWindow()

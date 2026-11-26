@@ -190,6 +190,8 @@ I18N: dict[str, dict[str, str]] = {
         "ramdisk_preview_text_meta": "{path} · {size} байт · {encoding}{truncated}",
         "ramdisk_preview_truncated": " · показана только начальная часть файла",
         "ramdisk_preview_empty": "Файл пуст.", "ramdisk_preview_done": "Предпросмотр: {path}",
+        "ramdisk_preview_source_missing": "Исходный образ недоступен. Выбери существующий файл и повтори просмотр.",
+        "ramdisk_preview_error": "Не удалось показать файл",
         "ramdisk_busy": "Операция Ramdisk выполняется…", "ramdisk_select_paths": "Выбери одну или несколько строк для извлечения.",
         "ramdisk_extract_done": "Извлечение завершено.\nФайлов: {files}\nКаталогов: {dirs}\nСсылок в манифесте: {links}\nКаталог: {path}",
         "ramdisk_export_saved": "Отчёт Ramdisk сохранён:\n{path}",
@@ -468,6 +470,8 @@ I18N: dict[str, dict[str, str]] = {
         "ramdisk_preview_text_meta": "{path} · {size} bytes · {encoding}{truncated}",
         "ramdisk_preview_truncated": " · only the beginning of the file is shown",
         "ramdisk_preview_empty": "The file is empty.", "ramdisk_preview_done": "Preview: {path}",
+        "ramdisk_preview_source_missing": "The source image is unavailable. Select an existing file and try again.",
+        "ramdisk_preview_error": "Could not preview file",
         "ramdisk_busy": "Ramdisk operation is running…", "ramdisk_select_paths": "Select one or more rows to extract.",
         "ramdisk_extract_done": "Extraction completed.\nFiles: {files}\nDirectories: {dirs}\nLinks in manifest: {links}\nDirectory: {path}",
         "ramdisk_export_saved": "Ramdisk report saved:\n{path}",
@@ -3702,6 +3706,9 @@ class RamdiskInspectorDialog(QDialog):
         self.worker: RamdiskWorker | None = None
         self._active_action: str | None = None
         self._close_when_finished = False
+        self._preview_loaded_path: str | None = None
+        self._preview_loading_path: str | None = None
+        self._populating_report = False
         self.setWindowTitle(parent.t("ramdisk_title"))
         self.resize(1040, 720)
         self.setMinimumSize(840, 580)
@@ -3883,6 +3890,8 @@ class RamdiskInspectorDialog(QDialog):
         self.details.clear()
         self.preview_edit.clear()
         self.preview_meta.setText(self.main.t("ramdisk_preview_select"))
+        self._preview_loaded_path = None
+        self._preview_loading_path = None
         self.search_edit.clear()
         self.filter_combo.setCurrentIndex(0)
         self.visible_count_label.setText(self.main.t("ramdisk_visible_count").format(visible=0, total=0))
@@ -3925,7 +3934,7 @@ class RamdiskInspectorDialog(QDialog):
 
     def _set_busy(self, busy: bool) -> None:
         for widget in (self.source_edit, self.browse_button, self.inspect_button, self.export_button,
-                       self.preview_button, self.search_edit, self.filter_combo,
+                       self.preview_button, self.search_edit, self.filter_combo, self.table,
                        self.extract_selected_button, self.extract_all_button,
                        self.fragment_check, self.fragment_spin, self.limit_spin):
             widget.setEnabled(not busy and (widget is not self.export_button or self.report is not None)
@@ -3961,6 +3970,8 @@ class RamdiskInspectorDialog(QDialog):
             self.main.last_result = result
             self.main.report_button.setEnabled(True)
         elif self._active_action == "preview":
+            self._preview_loading_path = None
+            self._preview_loaded_path = str(result.get("path", ""))
             if result.get("is_text"):
                 content = result.get("text_preview") or self.main.t("ramdisk_preview_empty")
                 self.preview_edit.setPlainText(content)
@@ -3980,26 +3991,38 @@ class RamdiskInspectorDialog(QDialog):
             self.details_tabs.setCurrentWidget(self.preview_page)
             self.summary.setText(self.main.t("ramdisk_preview_done").format(path=result.get("path", "")))
         else:
-            QMessageBox.information(
-                self, self.windowTitle(), self.main.t("ramdisk_extract_done").format(
-                    files=result.get("extracted_files", 0),
-                    dirs=result.get("created_directories", 0),
-                    links=result.get("symlinks_listed", 0),
-                    path=result.get("output_dir", ""),
-                ),
-            )
+            if not self._close_when_finished:
+                QMessageBox.information(
+                    self, self.windowTitle(), self.main.t("ramdisk_extract_done").format(
+                        files=result.get("extracted_files", 0),
+                        dirs=result.get("created_directories", 0),
+                        links=result.get("symlinks_listed", 0),
+                        path=result.get("output_dir", ""),
+                    ),
+                )
             self.main.last_result = result
             self.main.report_button.setEnabled(True)
 
     @Slot(str)
     def _worker_failed(self, message: str) -> None:
+        if self._active_action == "preview":
+            self._preview_loading_path = None
+            self._preview_loaded_path = None
+            self.preview_meta.setText(
+                f"{self.main.t('ramdisk_preview_error')}: {message}"
+            )
+            self.summary.setText(self.main.t("ramdisk_error"))
+            # Automatic previews are intentionally non-modal: a bad or stale
+            # CPIO path must never block the GUI or headless smoke tests.
+            return
         if "RamdiskCancelled" in message:
             self.summary.setText(self.main.t("ramdisk_cancelled"))
             if not self._close_when_finished:
                 QMessageBox.information(self, self.windowTitle(), self.main.t("ramdisk_cancelled"))
             return
         self.summary.setText(self.main.t("ramdisk_error"))
-        QMessageBox.critical(self, self.windowTitle(), message)
+        if not self._close_when_finished:
+            QMessageBox.critical(self, self.windowTitle(), message)
 
     @Slot()
     def _worker_thread_finished(self) -> None:
@@ -4012,21 +4035,29 @@ class RamdiskInspectorDialog(QDialog):
 
     def _populate_report(self, report: dict[str, Any]) -> None:
         self.report = report
-        self.table.setRowCount(0)
-        for entry in report.get("entries", []):
-            row = self.table.rowCount()
-            self.table.insertRow(row)
-            values = (
-                str(entry.get("path", "")), str(entry.get("type", "unknown")),
-                f"{int(entry.get('size_bytes', 0)):,} B", str(entry.get("permissions_octal", "")),
-                str(entry.get("uid", "")), str(entry.get("gid", "")),
-                str(entry.get("checksum_status", "—")),
-            )
-            for column, value in enumerate(values):
-                cell = QTableWidgetItem(value)
-                cell.setData(Qt.ItemDataRole.UserRole, entry)
-                cell.setToolTip(json.dumps(entry, ensure_ascii=False, indent=2))
-                self.table.setItem(row, column, cell)
+        self._populating_report = True
+        previous_signals_blocked = self.table.blockSignals(True)
+        try:
+            self.table.setRowCount(0)
+            for entry in report.get("entries", []):
+                row = self.table.rowCount()
+                self.table.insertRow(row)
+                values = (
+                    str(entry.get("path", "")), str(entry.get("type", "unknown")),
+                    f"{int(entry.get('size_bytes', 0)):,} B", str(entry.get("permissions_octal", "")),
+                    str(entry.get("uid", "")), str(entry.get("gid", "")),
+                    str(entry.get("checksum_status", "—")),
+                )
+                for column, value in enumerate(values):
+                    cell = QTableWidgetItem(value)
+                    cell.setData(Qt.ItemDataRole.UserRole, entry)
+                    cell.setToolTip(json.dumps(entry, ensure_ascii=False, indent=2))
+                    self.table.setItem(row, column, cell)
+            self.table.clearSelection()
+            self.table.setCurrentCell(-1, -1)
+        finally:
+            self.table.blockSignals(previous_signals_blocked)
+            self._populating_report = False
         self.summary.setText(self.main.t("ramdisk_summary").format(
             compression=report.get("compression_format", "?"),
             cpio=", ".join(report.get("cpio_formats", [])) or "?",
@@ -4042,6 +4073,8 @@ class RamdiskInspectorDialog(QDialog):
         self.details.setPlainText(json.dumps(details, ensure_ascii=False, indent=2))
         self.preview_edit.clear()
         self.preview_meta.setText(self.main.t("ramdisk_preview_select"))
+        self._preview_loaded_path = None
+        self._preview_loading_path = None
         self.details_tabs.setCurrentWidget(self.details)
         self._apply_filters()
         self.main.last_result = report
@@ -4056,6 +4089,8 @@ class RamdiskInspectorDialog(QDialog):
             suffix in {".rc", ".prop", ".fstab", ".conf", ".cfg", ".ini", ".xml",
                        ".json", ".txt", ".sh", ".te", ".policy", ".rule", ".service"}
             or name.startswith(("fstab.", "init.", "ueventd.", "vold.", "sepolicy"))
+            # The standalone Android /init binary is executable, not a config file.
+            # Keep init.rc and other init.* configuration files in this category.
             or name in {"fstab", "build.prop", "default.prop", "ueventd.rc", "prop.default"}
         )
 
@@ -4088,8 +4123,14 @@ class RamdiskInspectorDialog(QDialog):
         self.table.clearSelection()
         self.preview_button.setEnabled(False)
         self.extract_selected_button.setEnabled(False)
+        self._preview_loaded_path = None
+        self._preview_loading_path = None
+        self.preview_edit.clear()
+        self.preview_meta.setText(self.main.t("ramdisk_preview_select"))
 
     def _show_selected(self) -> None:
+        if self._populating_report:
+            return
         rows = sorted({item.row() for item in self.table.selectedItems()})
         if not rows:
             if self.report is not None and self.thread is None:
@@ -4102,7 +4143,54 @@ class RamdiskInspectorDialog(QDialog):
             self.details.setPlainText(json.dumps(item, ensure_ascii=False, indent=2))
         if self.thread is None and self.report is not None:
             self.extract_selected_button.setEnabled(True)
-            self.preview_button.setEnabled(bool(isinstance(item, dict) and item.get("type") == "file"))
+            is_regular_file = isinstance(item, dict) and item.get("type") == "file"
+            self.preview_button.setEnabled(is_regular_file)
+            if is_regular_file:
+                path = str(item.get("path", ""))
+                try:
+                    small_enough_for_auto_preview = int(item.get("size_bytes", 0)) <= 256 * 1024
+                except (TypeError, ValueError):
+                    small_enough_for_auto_preview = False
+                # Automatically preview configuration files and small files.
+                # Large binaries (for example Android init) remain on the details
+                # tab until the user explicitly requests their bounded HEX preview.
+                if self._is_config_entry(item) or small_enough_for_auto_preview:
+                    self._load_preview_path(path)
+                else:
+                    self.details_tabs.setCurrentWidget(self.details)
+                    self.preview_meta.setText(self.main.t("ramdisk_preview_select"))
+            else:
+                self.details_tabs.setCurrentWidget(self.details)
+                self.preview_edit.clear()
+                self.preview_meta.setText(self.main.t("ramdisk_preview_select"))
+                self._preview_loaded_path = None
+                self._preview_loading_path = None
+
+    def _load_preview_path(self, cpio_path: str, *, force: bool = False) -> None:
+        """Load a selected regular file asynchronously and show its preview tab."""
+        if self._populating_report or self.thread is not None or not cpio_path:
+            return
+        source_text = self.source_edit.text().strip()
+        if not source_text or not Path(source_text).expanduser().is_file():
+            self._preview_loading_path = None
+            self.preview_meta.setText(self.main.t("ramdisk_preview_source_missing"))
+            self.details_tabs.setCurrentWidget(self.preview_page)
+            return
+        if not force and self._preview_loaded_path == cpio_path:
+            self.details_tabs.setCurrentWidget(self.preview_page)
+            return
+        if self._preview_loading_path == cpio_path:
+            self.details_tabs.setCurrentWidget(self.preview_page)
+            return
+        self._preview_loading_path = cpio_path
+        self.preview_edit.clear()
+        self.preview_meta.setText(self.main.t("ramdisk_busy"))
+        self.details_tabs.setCurrentWidget(self.preview_page)
+        self._start_worker("preview", selected_path=cpio_path)
+        # If validation rejected the source before a worker was created, do not
+        # leave the UI in a permanent loading state.
+        if self.thread is None:
+            self._preview_loading_path = None
 
     def _preview_selected(self) -> None:
         rows = sorted({item.row() for item in self.table.selectedItems()})
@@ -4113,8 +4201,7 @@ class RamdiskInspectorDialog(QDialog):
         if not isinstance(item, dict) or item.get("type") != "file":
             QMessageBox.information(self, self.windowTitle(), self.main.t("ramdisk_preview_select"))
             return
-        self.preview_meta.setText(self.main.t("ramdisk_busy"))
-        self._start_worker("preview", selected_path=str(item.get("path", "")))
+        self._load_preview_path(str(item.get("path", "")), force=True)
 
     def _extract_to(self, include_paths: set[str] | None) -> None:
         if self.report is None:
@@ -4167,7 +4254,11 @@ class RamdiskInspectorDialog(QDialog):
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API name
         if _qt_thread_is_running(self.thread):
             event.ignore()
-            QMessageBox.information(self, self.windowTitle(), self.main.t("ramdisk_busy"))
+            self._close_when_finished = True
+            self.cancel_button.setEnabled(False)
+            self.summary.setText(self.main.t("ramdisk_cancelling"))
+            if self.worker is not None:
+                self.worker.request_cancel()
             return
         super().closeEvent(event)
 
@@ -5755,10 +5846,6 @@ class MainWindow(QWidget):
         self.verify_output_default = bool(self.settings.value("verify_output", True, type=bool))
         self.recent_files = [str(x) for x in self.settings.value("recent_files", [], type=list) if str(x)]
         self._last_progress = {}; self.last_result: dict[str, Any] | None = None
-        # Keep modeless tool dialogs alive for the lifetime of the main window.
-        # Initialize the registry eagerly: operation_running() and closeEvent()
-        # inspect it even before the first dialog has been opened.
-        self._dialogs: list[QDialog] = []
         self._status_label = I18N[self.language]["status_idle"]; self._status_color = "muted"
         self._close_after_worker = False
         app_icon = QIcon(str(resource_path("assets/sparse-to-raw.ico")))
@@ -5772,6 +5859,7 @@ class MainWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True); self.setAcceptDrops(True)
         self.setMinimumSize(1120, 760); self.resize(1420, 900)
         self._thread: QThread | None=None; self._worker: ConversionWorkerObject | None=None
+        self._dialogs: list[QDialog] = []
         self._output_manual=False; self._setting_output=False; self._close_after_worker=False; self._expected_size=0; self._total_chunks=0
         self.icon_size = self.style().pixelMetric(QStyle.PixelMetric.PM_SmallIconSize) + 10
         self._build_ui(); self._apply_styles(); self.retranslate_ui(); self._restore_settings()
@@ -6533,7 +6621,13 @@ class MainWindow(QWidget):
         dialog=MergeDialog(self); dialog.show(); self._keep_dialog(dialog)
     def _keep_dialog(self,dialog:QDialog) -> None:
         self._dialogs.append(dialog)
-        dialog.finished.connect(lambda _=0,d=dialog:self._dialogs.remove(d) if d in self._dialogs else None)
+
+        def _release_dialog(_result: int = 0, current: QDialog = dialog) -> None:
+            if current in self._dialogs:
+                self._dialogs.remove(current)
+            self._check_close_after_workers()
+
+        dialog.finished.connect(_release_dialog)
     def _save_last_report(self) -> None:
         if not self.last_result: return
         if self.last_result.get("operation") == "logical-image-comparison":
@@ -6556,18 +6650,32 @@ class MainWindow(QWidget):
         if files: self._set_source_path(files[0]); event.acceptProposedAction()
         else: event.ignore()
     def closeEvent(self,event) -> None:  # noqa: N802
-        active_dialogs=[d for d in getattr(self,"_dialogs",[]) if _qt_thread_is_running(getattr(d,"thread",None))]
-        own_active=_qt_thread_is_running(self._thread)
+        active_dialogs = [
+            dialog for dialog in self._dialogs
+            if _qt_thread_is_running(getattr(dialog, "thread", None))
+        ]
+        own_active = _qt_thread_is_running(self._thread)
         if own_active or active_dialogs:
-            answer=QMessageBox.question(self,self.t("window_title"),"A task is running. Cancel safely and close?",QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,QMessageBox.StandardButton.No)
-            if answer==QMessageBox.StandardButton.Yes:
-                self._close_after_worker=True
-                if own_active: self._request_cancel()
+            answer = QMessageBox.question(
+                self, self.t("window_title"),
+                "A task is running. Cancel safely and close?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                self._close_after_worker = True
+                if own_active:
+                    self._request_cancel()
                 for dialog in active_dialogs:
-                    dialog._close_when_finished=True
-                    if getattr(dialog,"worker",None) is not None: dialog.worker.request_cancel()
-            event.ignore(); return
-        self._save_settings(); event.accept()
+                    if hasattr(dialog, "_close_when_finished"):
+                        dialog._close_when_finished = True
+                    worker = getattr(dialog, "worker", None)
+                    if worker is not None and hasattr(worker, "request_cancel"):
+                        worker.request_cancel()
+            event.ignore()
+            return
+        self._save_settings()
+        event.accept()
 
 
 def main(argv:list[str]|None=None)->int:

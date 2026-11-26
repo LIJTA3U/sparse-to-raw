@@ -91,7 +91,7 @@ The dialog performs decompression, parsing, preview, and extraction in a worker 
 - **Search** matches CPIO paths case-insensitively.
 - **Filters** show all entries, regular files, directories, symlinks, executable files (any execute bit set), or likely configuration files (for example `.rc`, `.prop`, `.fstab`, `.conf`, `.xml`, and `build.prop`). The configuration filter is heuristic, not a semantic parser.
 - The inventory table shows path, CPIO type, size, permission bits, UID, GID, and checksum state.
-- Select a regular file and use **Preview text** to read up to 256 KiB without extracting it to the destination. UTF-8 and BOM-marked UTF-16 are supported; data identified as binary is shown as a short HEX preview. Large files are marked as truncated. The preview is not an editor.
+- Selecting a regular file automatically loads its content in the **Preview** tab on a background worker. The **Preview text** button can reload the selected entry. Up to 256 KiB is displayed without extracting it to the destination. UTF-8 and BOM-marked UTF-16 are supported; Android configuration names such as `fstab`, `fstab.mt6762`, `fstab.mt6765`, `init.rc`, and `build.prop` are treated as text even when vendor data contains unusual bytes (NUL bytes still indicate binary data). Data identified as binary is shown as a short HEX preview. Large files are marked as truncated. The preview is read-only.
 - Select one or more rows and use **Extract selected**. Selecting a directory includes all descendants. Search/filter changes clear the selection so hidden rows cannot be extracted accidentally.
 - **Extract all** and **Export JSON** remain available.
 

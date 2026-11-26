@@ -705,6 +705,21 @@ def inspect_ramdisk(
 MAX_TEXT_PREVIEW_BYTES = 256 * 1024
 
 
+def _is_likely_text_config_path(cpio_path: str) -> bool:
+    """Return whether a CPIO path conventionally stores Android text config."""
+    name = PurePosixPath(cpio_path.replace("\\", "/")).name.casefold()
+    suffix = PurePosixPath(name).suffix
+    return (
+        suffix in {
+            ".rc", ".prop", ".fstab", ".conf", ".cfg", ".ini", ".xml",
+            ".json", ".txt", ".sh", ".te", ".policy", ".rule", ".service",
+        }
+        or name == "fstab"
+        or name.startswith(("fstab.", "init.", "ueventd.", "vold.", "sepolicy"))
+        or name in {"build.prop", "default.prop", "ueventd.rc", "prop.default"}
+    )
+
+
 def read_ramdisk_file(
     image_path: str | os.PathLike[str], cpio_path: str, *,
     fragment_index: int | None = None,
@@ -778,7 +793,18 @@ def read_ramdisk_file(
         probe = text_data[:8192]
         has_nul = b"\x00" in probe and not utf16_bom
         control_count = sum(1 for byte in probe if byte < 9 or 13 < byte < 32)
-        is_text = utf16_bom or (not has_nul and (not probe or control_count <= max(1, len(probe) // 100)))
+        # Android fstab/init/property files are text by convention. Some vendor
+        # builds contain non-UTF-8 bytes or unusual control characters in comments;
+        # still show them as text with replacement characters instead of silently
+        # treating the file as binary. NUL bytes remain a strong binary indicator.
+        config_path_hint = _is_likely_text_config_path(requested)
+        is_text = utf16_bom or (
+            not has_nul and (
+                config_path_hint
+                or not probe
+                or control_count <= max(1, len(probe) // 100)
+            )
+        )
         text_preview: str | None = None
         hex_preview: str | None = None
         if is_text:
@@ -803,6 +829,7 @@ def read_ramdisk_file(
             "truncated": data_size > len(data),
             "is_text": is_text,
             "encoding": encoding if is_text else None,
+            "text_detection_hint": config_path_hint,
             "text_preview": text_preview,
             "hex_preview": hex_preview,
             "fragment_index": report.get("fragment_index"),

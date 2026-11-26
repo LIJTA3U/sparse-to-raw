@@ -184,6 +184,39 @@ class RamdiskInspectorTests(unittest.TestCase):
         self.assertFalse(result["truncated"])
         self.assertFalse((self.root / "etc").exists())
 
+    def test_preview_recognizes_vendor_fstab_names_as_text(self) -> None:
+        content = (
+            b"# Android fstab for vendor device\r\n"
+            b"/dev/block/by-name/system /system ext4 ro wait,logical\r\n"
+            b"/dev/block/by-name/vendor /vendor ext4 ro wait,logical\r\n"
+        )
+        archive = cpio_archive([
+            ("fstab.mt6762", content, 0o100640, 1, 1),
+            ("fstab.mt6765", content.replace(b"mt6762", b"mt6765"), 0o100640, 2, 1),
+        ])
+        image = self.root / "blackview-fstab.cpio.gz"
+        image.write_bytes(gzip.compress(archive))
+
+        for name in ("fstab.mt6762", "fstab.mt6765"):
+            with self.subTest(name=name):
+                result = read_ramdisk_file(image, name)
+                self.assertTrue(result["is_text"])
+                self.assertTrue(result["text_detection_hint"])
+                self.assertIn("/system ext4", result["text_preview"])
+                self.assertFalse(result["truncated"])
+
+    def test_preview_uses_text_hint_for_vendor_config_with_non_utf8_bytes(self) -> None:
+        content = b"# vendor config\nkey=value-\xff\n"
+        archive = cpio_archive([("fstab.vendor", content, 0o100640, 1, 1)])
+        image = self.root / "vendor-config-bytes.cpio.gz"
+        image.write_bytes(gzip.compress(archive))
+
+        result = read_ramdisk_file(image, "fstab.vendor")
+
+        self.assertTrue(result["is_text"])
+        self.assertIn("key=value-", result["text_preview"])
+        self.assertIn("replacement characters", result["encoding"])
+
     def test_preview_is_bounded_and_marks_truncated_text(self) -> None:
         large_text = b"line=1\n" * 200
         archive = cpio_archive([("large.rc", large_text, 0o100644, 1, 1)])

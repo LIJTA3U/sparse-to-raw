@@ -6,7 +6,7 @@
 - Added safe selected-path extraction, decompression and entry-count limits, symlink/special-file manifests, JSON reports, and source-image preservation.
 - Added the bilingual Ramdisk Inspector GUI with inventory table, fragment selector, configurable decompression limit, selected/all extraction, JSON export, and background cancellation.
 - Added case-insensitive CPIO path search and category filters for all entries, files, directories, symlinks, executables, and likely configuration files.
-- Added bounded text-file preview (up to 256 KiB), HEX preview for binary entries, and visible UID/GID columns.
+- Added bounded text-file preview (up to 256 KiB), HEX preview for binary entries, and visible UID/GID columns; selecting a regular file now opens its preview automatically. Android configuration paths such as `fstab.mt6765` receive text-oriented decoding, including replacement for vendor-specific non-UTF-8 bytes.
 - Added a read-only `read_ramdisk_file` API for bounded previews without materializing CPIO paths in the destination filesystem.
 - Added Ramdisk unit tests and bilingual CLI, GUI, and format/limitation documentation.
 - Made compressed Kernel formats explicit in the Boot Image Inspector table (for example, `Kernel (GZIP)`) and added separate, clearly named rows for unclassified bytes before and after VBMeta, with byte-range details and tooltips. Added bilingual GUI regression coverage for these rows.
@@ -24,9 +24,11 @@
 - Dedicated bilingual Super Image GUI dialog with background inspection/extraction, progress, cancellation, and source/slot change invalidation.
 
 ### Fixed
+- Ramdisk inventory population now blocks programmatic selection signals, preventing automatic preview workers from starting against placeholder paths in GUI tests.
+- Automatic Ramdisk previews now validate the source path and report preview failures inline instead of opening modal dialogs.
+- Closing Ramdisk Inspector during an active worker now requests safe cancellation and closes after the worker exits, without a modal prompt.
+- Restored explicit QThread-only worker detection and eager MainWindow dialog registry initialization to prevent mock objects from blocking GUI teardown.
 - The Ramdisk configuration-file filter now recognizes the extensionless `fstab` entry in addition to `fstab.*`.
-- The Ramdisk configuration filter no longer classifies the executable `init` binary as a configuration file; `init.rc` and extensionless `fstab` remain recognized.
-- `MainWindow` now initializes its modeless-dialog registry during construction, so worker-state checks and close handling are safe before the first tool dialog is opened.
 - GUI worker-state checks now treat only actual `QThread` instances as running workers. This prevents mocked dialog thread attributes from opening modal close prompts and hanging headless GUI tests.
 - The PySide6 GUI workflow now has job/step timeouts, unbuffered test output, and an early check for required Super Image binary fixtures.
 
@@ -193,3 +195,5 @@ Added a dedicated QFIL XML GUI workflow accessible from the main toolbar and Bat
 - Added streaming RAW → Android Sparse v1.0 encoding in the standard-library CLI.
 - Added configurable block size, `RAW`/`FILL`/`DONT_CARE` chunk selection, CRC32, optional SHA-256, atomic output and JSON summary.
 - Added RAW → Sparse round-trip and validation tests.
+
+- Fixed Ramdisk Inspector configuration filtering so the executable `init` binary is not classified as a configuration file; `init.rc`, `fstab`, and named fstab variants remain recognized.

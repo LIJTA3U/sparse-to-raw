@@ -12,8 +12,7 @@ permissions:
 jobs:
   gui-smoke:
     name: PySide6 GUI / ${{ matrix.os }}
-    # Prevent a modal dialog or stuck Qt event loop from occupying a runner
-    # for GitHub Actions' default multi-hour timeout.
+    # Avoid multi-hour runner usage if a Qt modal dialog or event loop stalls.
     timeout-minutes: 15
     strategy:
       fail-fast: false
