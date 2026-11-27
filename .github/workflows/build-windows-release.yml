@@ -10,12 +10,12 @@ on:
         description: Existing GitHub Release to attach the packages to
         required: true
         type: string
-        default: v0.6.0
+        default: v0.7.0
       source_ref:
-        description: Branch, tag, or commit to build from (main includes the post-release test fixes)
+        description: Branch, tag, or commit containing the release source to build
         required: true
         type: string
-        default: v0.6.0
+        default: v0.7.0
 
 permissions:
   contents: write
@@ -97,7 +97,7 @@ jobs:
         run: >-
           python -m PyInstaller --noconfirm --clean --onefile
           --name sparse-to-raw --distpath dist/cli --workpath build/cli
-          --specpath build/spec/cli --hidden-import avb_inspector --hidden-import boot_inspector --hidden-import ramdisk_inspector sparse_to_raw.py
+          --specpath build/spec/cli --hidden-import avb_inspector --hidden-import boot_inspector --hidden-import ramdisk_inspector --hidden-import qfil_xml --hidden-import super_image sparse_to_raw.py
 
       - name: Smoke-test packaged CLI
         shell: pwsh
@@ -121,6 +121,26 @@ jobs:
           & $cli vbmeta-info --help | Out-Null
           if ($LASTEXITCODE -ne 0) {
             throw "Packaged CLI vbmeta-info --help failed with exit code $LASTEXITCODE"
+          }
+
+          & $cli qfil-validate --help | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged CLI qfil-validate --help failed with exit code $LASTEXITCODE"
+          }
+
+          & $cli --lang ru qfil-validate --help | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged CLI Russian qfil-validate --help failed with exit code $LASTEXITCODE"
+          }
+
+          & $cli super-info --help | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged CLI super-info --help failed with exit code $LASTEXITCODE"
+          }
+
+          & $cli super-extract --help | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged CLI super-extract --help failed with exit code $LASTEXITCODE"
           }
 
           & $cli --lang ru vbmeta-info --help | Out-Null

@@ -125,7 +125,7 @@ Inspect Android boot and vendor boot metadata with `py sparse_to_raw.py boot-inf
 - [Diagnostic Center](docs/en/diagnostic-center.md)
 - [Sparse Structure Viewer](docs/en/sparse-structure-viewer.md)
 - [Development and packaging](docs/en/development.md)
-- [v0.6.0 release checklist](docs/en/release-checklist.md)
+- [v0.7.0 release checklist](docs/en/release-checklist.md)
 - [v0.6.0 release notes](RELEASE_NOTES_v0.6.0.md)
 - [Changelog](docs/en/changelog.md)
 - [Contributing](docs/CONTRIBUTING.md)

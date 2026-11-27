@@ -14,6 +14,5 @@ htmlcov/
 build/
 dist/
 *.spec
-# Keep the small deterministic binary fixtures used by the test suite.
-!tests/fixtures/
+# Small synthetic Super Image regression fixtures are intentionally tracked.
 !tests/fixtures/*.img

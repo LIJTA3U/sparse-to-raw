@@ -125,7 +125,7 @@ py sparse_to_raw.py --merge-parts super.img_sparsechunk.0 super.img_sparsechunk.
 - [Центр диагностики](docs/ru/diagnostic-center.md)
 - [Просмотр структуры Sparse](docs/ru/sparse-structure-viewer.md)
 - [Разработка и сборка](docs/ru/development.md)
-- [Контрольный список релиза v0.6.0](docs/ru/release-checklist.md)
+- [Контрольный список релиза v0.7.0](docs/ru/release-checklist.md)
 - [Заметки к релизу v0.6.0](RELEASE_NOTES_v0.6.0.ru.md)
 - [История изменений](docs/ru/changelog.md)
 - [Участие в разработке](docs/CONTRIBUTING.md)

@@ -25,9 +25,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Verify required binary test fixtures
+      - name: Verify required Super Image test fixtures
         run: >-
-          python -c "from pathlib import Path; files=['tests/fixtures/super_multi_extent.img','tests/fixtures/expected_system.img','tests/fixtures/expected_vendor.img']; missing=[p for p in files if not Path(p).is_file()]; print('Missing test fixtures:', ', '.join(missing)) if missing else print('All Super Image fixtures are present'); raise SystemExit(bool(missing))"
+          python -c "from pathlib import Path; names=('super_multi_extent.img','expected_system.img','expected_vendor.img'); root=Path('tests/fixtures'); missing=[name for name in names if not (root/name).is_file() or (root/name).stat().st_size == 0]; print('Missing or empty fixtures:', ', '.join(missing)) if missing else print('All required Super Image fixtures are present.'); raise SystemExit(bool(missing))"
       - name: Compile Python modules
         run: python -m compileall -q .
       - name: Run complete unit test suite
