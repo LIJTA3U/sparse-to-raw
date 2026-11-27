@@ -1,4 +1,3 @@
-
 name: Build Windows applications
 
 on:
@@ -6,16 +5,21 @@ on:
     types: [published]
   workflow_dispatch:
     inputs:
-      release_tag:
-        description: Existing GitHub Release to attach the packages to
-        required: true
-        type: string
-        default: v0.7.0
       source_ref:
-        description: Branch, tag, or commit containing the release source to build
+        description: Branch, tag, or commit to build
         required: true
         type: string
-        default: v0.7.0
+        default: main
+      upload_to_release:
+        description: Upload the packages to an existing GitHub Release (leave disabled for build-only testing)
+        required: true
+        type: boolean
+        default: false
+      release_tag:
+        description: Existing GitHub Release tag (required only when upload_to_release is enabled)
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -26,16 +30,50 @@ jobs:
     runs-on: windows-latest
 
     steps:
+      - name: Determine release upload mode
+        id: release-mode
+        shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_UPLOAD_TO_RELEASE: ${{ inputs.upload_to_release }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          EVENT_RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          $uploadToRelease = $env:EVENT_NAME -eq "release"
+          if ($env:EVENT_NAME -eq "workflow_dispatch" -and $env:INPUT_UPLOAD_TO_RELEASE -eq "true") {
+            $uploadToRelease = $true
+          }
+
+          if ($env:EVENT_NAME -eq "release") {
+            $releaseTag = $env:EVENT_RELEASE_TAG
+          } else {
+            $releaseTag = $env:INPUT_RELEASE_TAG
+          }
+
+          if ($uploadToRelease -and [string]::IsNullOrWhiteSpace($releaseTag)) {
+            throw "Release upload was requested, but release_tag is empty."
+          }
+
+          "upload_to_release=$($uploadToRelease.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "release_tag=$($releaseTag.Trim())" >> $env:GITHUB_OUTPUT
+
+          if ($uploadToRelease) {
+            Write-Host "Release upload enabled for tag: $($releaseTag.Trim())"
+          } else {
+            Write-Host "Build-only mode: no GitHub Release will be modified."
+          }
+
       - name: Check out repository
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.event.release.tag_name }}
 
       - name: Resolve existing release
+        if: steps.release-mode.outputs.upload_to_release == 'true'
         id: target-release
         uses: actions/github-script@v7
         env:
-          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.event.release.tag_name }}
+          RELEASE_TAG: ${{ steps.release-mode.outputs.release_tag }}
         with:
           script: |
             const tag = process.env.RELEASE_TAG;
@@ -59,9 +97,10 @@ jobs:
           python-version: '3.12'
 
       - name: Verify application version matches release tag
+        if: steps.release-mode.outputs.upload_to_release == 'true'
         shell: pwsh
         env:
-          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.event.release.tag_name }}
+          RELEASE_TAG: ${{ steps.release-mode.outputs.release_tag }}
         run: |
           $appVersion = python -c "from sparse_to_raw import APP_VERSION; print(APP_VERSION)"
           if ($LASTEXITCODE -ne 0) {
@@ -375,6 +414,7 @@ jobs:
           retention-days: 14
 
       - name: Upload files to existing GitHub Release
+        if: steps.release-mode.outputs.upload_to_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.target-release.outputs.tag_name }}
