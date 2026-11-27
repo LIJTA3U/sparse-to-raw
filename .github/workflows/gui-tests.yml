@@ -24,9 +24,9 @@ jobs:
       QT_QPA_PLATFORM: offscreen
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       # PySide6 needs the system EGL/OpenGL libraries even when tests use the offscreen Qt platform.

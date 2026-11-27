@@ -1,181 +1,46 @@
-# sparse-to-raw
+# Исправление CLI UTF-8 и GitHub Actions Node.js 24
 
-Потоковая утилита для анализа Android Sparse Image v1 и преобразования Sparse-образов в логическое RAW-содержимое. Проект включает CLI на Python без сторонних зависимостей и графический интерфейс PySide6 для Windows.
+Этот пакет рассчитан на текущую ветку `main` после добавления build-only режима Windows-сборки.
+Он содержит patch, а не полную копию проекта.
 
-[![Тесты](https://img.shields.io/github/actions/workflow/status/LIJTA3U/sparse-to-raw/tests.yml?branch=main&label=тесты)](https://github.com/LIJTA3U/sparse-to-raw/actions/workflows/tests.yml)
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Лицензия MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![CLI без зависимостей](https://img.shields.io/badge/CLI-зависимости%20не%20нужны-brightgreen.svg)](#требования)
+## Что исправлено
 
-**Язык:** [Русский](README.ru.md) · [English](README.md)
+1. `sparse_to_raw.py`: до обработки аргументов CLI оба текстовых потока `stdout` и `stderr` переводятся на UTF-8 через `reconfigure()`. Это предотвращает `UnicodeEncodeError` при показе локализованной справки `argparse` в Windows-сборке, когда исходная кодировка потока — например, `cp1252`.
+2. Добавлен `tests/test_cli_console_encoding.py`: регрессионный тест имитирует потоки `cp1252` и проверяет вывод русской QFIL-справки.
+3. Во всех трёх workflow обновлены `actions/checkout` до v7 и `actions/setup-python` до v7.
+4. В Windows release workflow отложенные шаги публикации обновлены: `actions/github-script` до v8 и `softprops/action-gh-release` до v3.
 
-> **Статус проекта: v0.7.0 находится в разработке; последний стабильный релиз — v0.6.0.** Побайтное сравнение с AOSP `simg2img.exe` выполнено на двух реальных заводских образах: `super.img` от Blackview и `userdata_exp.ai.img` от Google Pixel; в обоих случаях различий не найдено. Инструменты ветки v0.7.0 дополнительно проверены на реальных RAW- и Android Sparse-образах `super.img` Blackview через CLI и GUI: SHA-256 извлечённых разделов совпали между интерфейсами; также проверена синтетическая фикстура с несколькими extents. Несколько пользователей отдельно сообщили об успешных проверках на других прошивках. В одном из описанных сценариев Android 13 `super.img` на Windows 11 был успешно преобразован, после чего удалось извлечь раздел `system.img`. Пользовательские отзывы расширяют имеющиеся свидетельства совместимости, но не являются всеобъемлющей сертификацией и не гарантируют поддержку всех вариантов Sparse, устройств, прошивок и конфигураций Dynamic Partitions. Проверка отдельных `super.img` не означает поддержку произвольных наборов `super_*` или всех retrofit-конфигураций.
+## Применение
 
-## Возможности
-
-- Преобразование Android Sparse Image версии 1 в логическое RAW-содержимое и кодирование RAW в Android Sparse v1.0.
-- Поддержка чанков `RAW`, `FILL`, `DONT_CARE` и `CRC32`.
-- Проверка CRC32 каждого чанка, общей контрольной суммы образа, заголовков, размеров и количества блоков, обрезанных данных и лишних байтов в конце через отдельный Sparse Validator.
-- Анализ и проверка без создания RAW-файла (`--info`, `--verify-only`).
-- Защита существующих выходных файлов: по умолчанию перезапись запрещена, для неё требуется `--force`.
-- Индикатор прогресса, скорость, обработанный объём и количество чанков.
-- Необязательный расчёт SHA-256 логического RAW-содержимого и экспорт JSON-отчётов.
-- Проверка готового временного RAW повторным чтением, сравнением размера и SHA-256 с ожидаемым логическим содержимым (`--verify-output`).
-- Объединение независимых Sparse-образов в явно указанном порядке (`--merge-parts`).
-- Логическое сравнение RAW и/или Android Sparse без создания промежуточного RAW-файла (`compare`): поиск первого отличающегося байта и расчёт SHA-256 обоих логических образов.
-- Анализ Qualcomm QFIL `rawprogram*.xml` / `patch*.xml`, поиск файлов прошивки и сборка отдельного RAW на каждую физическую партицию (`qfil-analyze`, `qfil-validate`, `qfil-build`). Полная предварительная проверка контролирует диапазоны RAW и CRC Sparse без создания выходных файлов. Patch-инструкции попадают в отчёт, но не применяются.
-- Просмотр метаданных Android Verified Boot через `vbmeta-info`: анализ standalone VBMeta и образов с AVB footer, rollback index, флагов, отпечатков ключей и hash/hashtree/chain/property descriptors, проверка встроенного хеша VBMeta. RSA-подпись и доверие к ключу не проверяются.
-- Анализ Android Boot Image через `boot-info`: заголовки legacy boot v0–v2, generic boot v3–v4 и `vendor_boot` v3–v4; смещения и размеры компонентов, версия ОС, командная строка, распознавание распространённых сигнатур сжатия Kernel/Ramdisk, DTB, boot signature v4, фрагменты vendor ramdisk и структурные поля AVB footer с диапазоном VBMeta. Инспектор работает только на чтение, не распаковывает компоненты и не проверяет AVB-подпись.
-- Анализ CPIO внутри Android ramdisk и безопасное извлечение выбранных путей через `ramdisk-info` / `ramdisk-extract`. Поддерживаются boot/init_boot/recovery, выбор фрагмента `vendor_boot` v3/v4, отдельные CPIO, архивы newc/crc, gzip/bzip2/XZ/LZMA-alone/LZ4 frame и legacy, JSON-отчёты, ограничение распаковки и проверка безопасных путей. В GUI добавлены поиск по пути, фильтры (файлы, каталоги, ссылки, исполняемые и конфигурационные файлы), столбцы UID/GID, автоматический предпросмотр выбранного файла (до 256 КиБ, для бинарных файлов — HEX; `fstab.mt6762`/`fstab.mt6765` распознаются как текстовые конфигурации), выборочное извлечение файлов/каталогов и GUI-сравнение двух конфигураций с подсветкой добавленных, удалённых и изменённых строк. Сигнатуры Zstandard и LZO/lzop распознаются, но не распаковываются в сборке без сторонних зависимостей; символические ссылки и специальные узлы перечисляются в манифестах, но не создаются.
-- Просмотр метаданных Android Dynamic Partitions (`super-info`) и извлечение выбранных логических разделов из RAW/Sparse `super.img` (`super-extract`); проверяются геометрия и SHA-256 метаданных, поддерживается резервная копия метаданных.
-- Сохранение и загрузка версионированных JSON-профилей смешанной Batch Queue: Sparse → RAW, RAW → Sparse и QFIL.
-- Экспорт подробных JSON-отчётов о конвертации, проверке результата, валидации, сравнении, QFIL и пакетных запусках.
-- Потоковая обработка больших файлов без загрузки целого образа в оперативную память.
-- CLI использует только стандартную библиотеку Python.
-- GUI на PySide6: отдельные диалоги RAW → Sparse и логического сравнения образов, профили Batch Queue (JSON) для Sparse → RAW / RAW → Sparse / QFIL, поддержка смешанной пакетной очереди, русский/английский языки, сохранение настроек, история файлов, анализ, последовательная очередь конвертации, визуальное изменение порядка частей, проверка RAW после записи, центр диагностики, постраничный просмотр структуры Sparse с экспортом CSV/JSON, окно Super Image для просмотра и извлечения разделов, AVB / VBMeta Inspector, Boot Image Inspector и Ramdisk Inspector в меню «Инструменты», а также JSON-отчёты.
-
-Области `DONT_CARE` интерпретируются как нулевые байты. Логический размер и содержимое RAW корректны; файловая система может физически хранить нулевые области как разреженные участки.
-
-## Скачать для Windows
-
-**Последний стабильный релиз:** [sparse-to-raw v0.6.0](https://github.com/LIJTA3U/sparse-to-raw/releases/tag/v0.6.0). Windows-приложения собираются и прикладываются к релизу через GitHub Actions.
-
-В релизе доступны:
-
-- `sparse-to-raw-gui-windows.zip` — рекомендуемый пакет GUI. Распакуйте архив целиком и запускайте `sparse-to-raw-gui.exe` из папки приложения.
-- `sparse-to-raw-gui.exe` — отдельный исполняемый файл GUI.
-- `sparse-to-raw.exe` — отдельная CLI-утилита.
-
-Для запуска готовых Windows-приложений конечному пользователю не нужно устанавливать Python. Для обычного использования рекомендуется ZIP-пакет; не меняйте структуру извлечённой папки.
-
-## Графический интерфейс Windows
-
-В ветке разработки v0.7.0 верхняя панель уплотнена: основные разделы собраны в первой строке, часто используемые действия — во второй, дополнительные — в меню «Инструменты». Новый диалог «Super-образ» показывает структуру Dynamic Partitions и извлекает выбранные разделы. В меню «Инструменты» доступны просмотрщики AVB / VBMeta и Android Boot Image, а также Ramdisk Inspector для анализа CPIO, безопасного извлечения файлов и построчного сравнения конфигураций. Подробности: [Super Image](docs/ru/super-image.md), [AVB / VBMeta](docs/ru/avb-vbmeta.md), [Boot Image](docs/ru/boot-image.md) и [Ramdisk](docs/ru/ramdisk-inspector.md).
-
-GUI использует тёмную тему, угловую жёлтую рамку и бирюзовые акценты. Поддерживаются перетаскивание файлов, статистика прогресса, журнал операций, сохранение настроек, история последних входных файлов и отображение скорости в МБ/с, МиБ/с или Мбит/с.
-
-![Главное окно sparse-to-raw GUI](docs/screenshots/main-window-ru.png)
-
-Действие **«Анализ образа»** проверяет метаданные без создания RAW-файла. **«Очередь задач»** последовательно обрабатывает несколько файлов и сохраняет итоговый JSON-отчёт. **«Объединить Sparse»** позволяет изменить порядок независимых Sparse-образов перед объединением. Конвертация и анализ выполняются в рабочих потоках Qt; отмена удаляет временный результат и сохраняет существующий выходной файл.
-
-См. [руководство по GUI](docs/ru/gui-guide.md) и [инструкцию по установке Windows](docs/ru/installation.md).
-
-## Быстрый старт (CLI)
-
-Для запуска из исходников требуется Python 3.10 или новее. CLI не требует сторонних Python-пакетов. По умолчанию CLI работает на английском; русский включается параметром `--lang ru` или переменной `SPARSE_TO_RAW_LANG=ru`. Подробности — в [руководстве CLI](docs/ru/cli-guide.md).
-
-```bash
-python sparse_to_raw.py input_sparse.img output_raw.img
-```
-
-Пример для Windows (`cmd`):
-
-```bat
-py sparse_to_raw.py super.img super_raw.img
-```
-
-Если выходной файл уже существует, конвертация остановится, не изменив его. Для явного разрешения перезаписи используйте:
-
-```bat
-py sparse_to_raw.py super.img super_raw.img --force
-```
-
-Проверить файл без конвертации:
-
-```bash
-python sparse_to_raw.py super.img --info
-python sparse_to_raw.py super.img --verify-only
-```
-
-Вычислить SHA-256 логического RAW-содержимого и сохранить JSON-отчёт:
-
-```bash
-python sparse_to_raw.py super.img super_raw.img --sha256 --json-report report.json
-```
-
-Сравнить два образа по логическому содержимому (RAW и/или Android Sparse):
-
-```bat
-py sparse_to_raw.py compare left.raw right.sparse --json-report comparison.json
-```
-
-Команда возвращает код `0`, если образы идентичны, `1`, если они различаются, и `2`, если сравнение не удалось выполнить. Промежуточный RAW-файл не создаётся.
-
-Объединить независимые Sparse-файлы в заданном порядке:
-
-```bat
-py sparse_to_raw.py --merge-parts super.img_sparsechunk.0 super.img_sparsechunk.1 --output super_raw.img --sha256
-```
-
-Каждый входной файл для объединения должен быть самостоятельным Sparse-образом с собственным заголовком. Этот режим не предназначен для объединения произвольных байтовых фрагментов одного Sparse-файла. GUI умеет находить группы файлов `super.img_sparsechunk.*` и сортировать их части по числовым индексам. Параметр CLI `--merge-parts` по-прежнему принимает список самостоятельных Sparse-образов в явно заданном порядке.
-
-Загрузочные образы можно анализировать командой `py sparse_to_raw.py boot-info boot.img --json-report boot-report.json`. Список CPIO внутри ramdisk просматривается командой `py sparse_to_raw.py ramdisk-info boot.img`, извлечение выполняется через `py sparse_to_raw.py ramdisk-extract boot.img --output-dir ramdisk-files`. Для `vendor_boot` v4 с несколькими фрагментами добавьте `--fragment-index N`. Полный список параметров и примеров находится в [руководстве CLI](docs/ru/cli-guide.md) и [руководстве по QFIL XML](docs/ru/qfil-xml.md). CLI также поддерживает `--verify-output`: перед публикацией результата временный RAW повторно читается, а его размер и SHA-256 сверяются с ожидаемым логическим содержимым.
-
-## Документация
-
-- [Установка](docs/ru/installation.md)
-- [Руководство CLI](docs/ru/cli-guide.md)
-- [Поддержка XML Qualcomm QFIL](docs/ru/qfil-xml.md)
-- [Анализ AVB / VBMeta](docs/ru/avb-vbmeta.md)
-- [Анализ Android Boot Image](docs/ru/boot-image.md)
-- [Анализ и извлечение Android Ramdisk](docs/ru/ramdisk-inspector.md)
-- [Проверка выходного RAW](docs/ru/output-verification.md)
-- [Руководство GUI](docs/ru/gui-guide.md)
-- [Руководство по очереди заданий](docs/ru/task-queue.md)
-- [Центр диагностики](docs/ru/diagnostic-center.md)
-- [Просмотр структуры Sparse](docs/ru/sparse-structure-viewer.md)
-- [Разработка и сборка](docs/ru/development.md)
-- [Контрольный список релиза v0.7.0](docs/ru/release-checklist.md)
-- [Заметки к релизу v0.6.0](RELEASE_NOTES_v0.6.0.ru.md)
-- [История изменений](docs/ru/changelog.md)
-- [Участие в разработке](docs/CONTRIBUTING.md)
-- [Политика безопасности](docs/SECURITY.md)
-- [Скриншоты](docs/screenshots/)
-
-[English README](README.md) ведёт на англоязычную документацию в `docs/en/`.
-
-## Стабильный релиз v0.6.0
-
-Стабильный `v0.6.0` объединяет конвертацию RAW → Sparse, логическое сравнение RAW/Sparse без промежуточного RAW-файла, отдельный Sparse Validator, повторно используемые JSON-профили Batch Queue, расширенную интеграцию QFIL, структурированные JSON-отчёты и автоматическую сборку Windows CLI/GUI. Артефакты Windows собраны через GitHub Actions; работоспособность упакованного приложения подтверждена на компьютере без установленного Python. Подробности приведены в [истории изменений на русском](docs/ru/changelog.md) и [английской истории изменений](docs/en/changelog.md).
-
-## Тесты
-
-Из корневого каталога проекта выполните:
-
-```bash
-python -m unittest discover -s tests -v
-```
-
-Основные тесты проверяют типы чанков, контрольные суммы, повреждённые и обрезанные данные, безопасную работу с выходными файлами, режимы анализа/проверки, объединение, SHA-256, JSON-отчёты, прогресс и отмену. Три небольшие бинарные фикстуры Super Image в `tests/fixtures/` явно исключены из `.gitignore` и должны попадать в коммиты; CI проверяет их наличие до запуска тестов. Тесты Boot Image Inspector проверяют legacy boot v0–v2, generic boot v3–v4, vendor_boot v3–v4, таблицу vendor ramdisk, границы компонентов и повреждённые заголовки. Тесты Ramdisk проверяют gzip/bzip2/XZ/LZMA/LZ4, разбор CPIO newc/crc, выбор фрагментов vendor_boot, CRC архивов, последовательные архивы, безопасность путей, лимит распаковки, извлечение, чтение нескольких файлов за один проход и классификацию различий строк. Тесты AVB и Dynamic Partitions проверяют соответствующие метаданные и пути извлечения. QFIL-тесты дополнительно проверяют разбор rawprogram/patch XML, поиск файлов, секторные диапазоны, RAW-сборку, пересечения и полный preflight без создания выходных файлов, включая CRC Sparse-источников. GUI smoke-тесты проверяют пути, элементы интерфейса, языковые настройки и единицы скорости, историю файлов, рабочие потоки, анализ, Super Image, AVB/VBMeta, Boot Image и Ramdisk Inspector, пакетную обработку и точку входа self-test. GitHub Actions запускает основные тесты в Windows и Linux на Python 3.10–3.14; GUI-тесты также выполняются в Windows и Linux с PySide6.
-
-## Ограничения и безопасность
-
-- Стабильный релиз v0.6.0 не является официальной заменой `simg2img` из AOSP; инструменты Super Image относятся к текущей ветке разработки v0.7.0-dev.
-- Независимое побайтовое сравнение выполнено только на двух реальных образах, указанных выше; это не сертификация для всех устройств и прошивок.
-- `--merge-parts` предназначен только для самостоятельных корректных файлов Sparse v1 и не собирает произвольные контейнеры `super`. Отдельные `super-info` / `super-extract` читают поддерживаемые метаданные Dynamic Partitions (LP 10.0–10.2), но пока требуют, чтобы извлекаемые extents ссылались на block device с индексом 0. Многобразные retrofit-конфигурации и произвольные наборы `super_*` не поддерживаются. См. [пример на 4PDA](https://4pda.to/forum/index.php?showtopic=496786&st=5460). Перед критически важным использованием независимо проверяйте результаты.
-- Boot Image Inspector только отображает метаданные: он не распаковывает Kernel/Ramdisk, не интерпретирует содержимое DTB и не проверяет AVB-подписи. Отдельный Ramdisk Inspector распаковывает поддерживаемые CPIO-форматы, но не пересобирает образы, не создаёт реальные символические ссылки/специальные узлы и не восстанавливает владельца и SELinux-метаданные. Zstandard и LZO/lzop распознаются, но не распаковываются в сборке без сторонних зависимостей. По одному заголовку нельзя достоверно определить имя раздела `boot`, `recovery` или `init_boot`; `init_boot` помечается только как вероятная роль по структуре образа.
-- Утилита работает только с файлами. Она не подключается к телефону и не прошивает разделы устройства.
-- Перед запуском проверьте входные/выходные пути и свободное место на диске. Для объединения требуется временное место под общий результат и раскрываемую текущую часть.
-- GUI умеет автоматически находить группы Sparse-частей и сортировать их по числовым индексам. Для CLI-параметра `--merge-parts` по-прежнему необходимо указывать самостоятельные Sparse-образы в правильном порядке.
-
-## Ссылки на формат
-
-- [AOSP `sparse_format.h`](https://android.googlesource.com/platform/system/core/+/refs/heads/main/libsparse/include/sparse/sparse_format.h)
-- [AOSP `sparse_read.cpp`](https://android.googlesource.com/platform/system/core/+/refs/heads/main/libsparse/sparse_read.cpp)
-- [AOSP `simg2img.cpp`](https://android.googlesource.com/platform/system/core/+/refs/heads/main/libsparse/simg2img.cpp)
-
-## Лицензия
-
-[MIT](LICENSE).
-
-
-## RAW → Android Sparse
-
-CLI без сторонних зависимостей преобразует RAW в Android Sparse v1.0 потоково, с ограниченным использованием памяти. Нулевые блоки записываются как `DONT_CARE`, повторяющиеся 4-байтовые шаблоны — как `FILL`, остальные данные — как `RAW`. Размер блока настраивается (по умолчанию 4096 байт; должен быть кратен 4). Размер входного файла должен быть ненулевым и делиться на выбранный размер блока без остатка.
+Распакуйте этот архив в любую временную папку. Откройте PowerShell в корне клонированного репозитория и выполните команды, указав путь к patch-файлу, если он находится не в текущем каталоге:
 
 ```powershell
-py sparse_to_raw.py raw-to-sparse system.raw system.sparse --block-size 4096 --sha256
+git apply --check .\cli-utf8-and-node24.patch
+if ($LASTEXITCODE -ne 0) { throw "Patch check failed" }
+git apply .\cli-utf8-and-node24.patch
+if ($LASTEXITCODE -ne 0) { throw "Patch apply failed" }
 ```
 
-Для замены существующего файла используйте `--force`, для JSON-сводки — `--json-report report.json`. Результат сначала формируется во временном файле и сохраняется только после успешного завершения кодирования.
-- [Заметки к релизу v0.6.0](RELEASE_NOTES_v0.6.0.ru.md)
+Затем проверьте:
+
+```powershell
+py -m unittest discover -s tests -p "test_cli_console_encoding.py" -v
+py -m unittest discover -s tests -p "test_cli_i18n.py" -v
+py -m compileall -q .
+git diff --check
+```
+
+Проверьте, что patch не создал конфликтов, затем сохраните изменения:
+
+```powershell
+git status --short
+git add sparse_to_raw.py tests/test_cli_console_encoding.py .github/workflows/build-windows-release.yml .github/workflows/tests.yml .github/workflows/gui-tests.yml
+git commit -m "Fix UTF-8 output in packaged CLI"
+git push
+```
+
+После push повторно запустите **Build Windows applications** в режиме build-only (`source_ref=main`, `upload_to_release=false`, `release_tag` пустой). Smoke-test уже содержит проверку `--lang ru qfil-validate --help`.
+
+## Примечание по Node.js warning
+
+На дату подготовки пакет переводит `checkout`, `setup-python`, `github-script` и `action-gh-release` на версии с нативной поддержкой Node.js 24. `actions/upload-artifact@v4` оставлен без изменения: на момент подготовки у него нет опубликованной Node.js 24 runtime-версии, поэтому предупреждение для этого шага ещё может появиться, когда workflow дойдёт до загрузки Artifact. Оно не связано с ошибкой CLI и само по себе не означает провал сборки.

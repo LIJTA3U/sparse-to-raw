@@ -1897,7 +1897,26 @@ def build_argument_parser() -> argparse.ArgumentParser:
     parser.add_argument("--quiet", action="store_true", help=tr("quiet"))
     return parser
 
+def _configure_console_streams() -> None:
+    """Use UTF-8 for CLI text output, including packaged Windows builds.
+
+    Windows may otherwise select a legacy code page (for example cp1252) for
+    stdout/stderr. Localized argparse help must remain printable in that case.
+    Custom streams without ``reconfigure`` are intentionally left untouched.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if not callable(reconfigure):
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, TypeError, ValueError):
+            # Keep the CLI usable with closed or non-reconfigurable streams.
+            continue
+
+
 def main(argv: list[str] | None = None) -> int:
+    _configure_console_streams()
     arguments = list(sys.argv[1:] if argv is None else argv)
     # Accept --lang in any position, including before or after a QFIL subcommand.
     selected_language = None

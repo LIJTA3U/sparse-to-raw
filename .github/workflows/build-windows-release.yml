@@ -64,14 +64,14 @@ jobs:
           }
 
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.event.release.tag_name }}
 
       - name: Resolve existing release
         if: steps.release-mode.outputs.upload_to_release == 'true'
         id: target-release
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         env:
           RELEASE_TAG: ${{ steps.release-mode.outputs.release_tag }}
         with:
@@ -92,7 +92,7 @@ jobs:
             core.info(`Assets will be uploaded to existing release ${response.data.html_url}`);
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -402,7 +402,7 @@ jobs:
 
       - name: Upload build artifacts for inspection
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: sparse-to-raw-windows-packages
           path: |
@@ -415,7 +415,7 @@ jobs:
 
       - name: Upload files to existing GitHub Release
         if: steps.release-mode.outputs.upload_to_release == 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.target-release.outputs.tag_name }}
           prerelease: ${{ steps.target-release.outputs.prerelease }}
