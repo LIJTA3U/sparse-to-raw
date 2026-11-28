@@ -1,4 +1,6 @@
-## [Unreleased] — v0.7.0 development
+## [Unreleased]
+
+## [0.7.0] — 2026-11-28
 
 ### Added
 - Added `ramdisk-info` and `ramdisk-extract` for CPIO inventory and safe extraction from boot/init_boot/recovery, `vendor_boot` v3/v4 (with explicit fragment selection when required), and standalone ramdisk archives.

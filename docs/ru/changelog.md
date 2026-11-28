@@ -1,4 +1,6 @@
-## [Unreleased] — разработка v0.7.0
+## [Unreleased]
+
+## [0.7.0] — 2026-11-28
 
 ### Добавлено
 - Добавлен Android Ramdisk Inspector: `ramdisk-info` показывает записи CPIO внутри boot/init_boot/recovery, фрагментов vendor_boot v3/v4 и отдельных архивов; `ramdisk-extract` безопасно извлекает выбранные пути или весь архив.

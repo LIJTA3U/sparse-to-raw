@@ -14,7 +14,7 @@ py sparse_to_raw.py --version
 py sparse_to_raw.py --help
 ```
 
-The release commit must report `sparse-to-raw v0.7.0`. Before changing `APP_VERSION` from `v0.7.0-dev`, finish all development work and update both changelogs and release notes.
+The release commit must report `sparse-to-raw v0.7.0`. The `APP_VERSION` constant must be set to `v0.7.0` before the final test and packaging run. Both changelogs and both release-notes files must describe the same release contents.
 
 Check the help output for the integrated commands: `qfil-analyze`, `qfil-validate`, `qfil-build`, `super-info`, `super-extract`, `vbmeta-info`, `boot-info`, `ramdisk-info`, `ramdisk-extract`, `validate`, `compare`, and `raw-to-sparse`.
 

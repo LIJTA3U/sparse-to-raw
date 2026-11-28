@@ -1,4 +1,6 @@
-## [Unreleased] — v0.7.0 development
+## [Unreleased]
+
+## [0.7.0] — 2026-11-28
 
 ### Added
 - Added the Android Ramdisk Inspector: `ramdisk-info` inventories CPIO entries from boot/init_boot/recovery, vendor_boot v3/v4 fragments, and standalone archives; `ramdisk-extract` safely extracts selected paths or the complete archive.

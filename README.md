@@ -9,7 +9,7 @@ A streaming Android Sparse Image v1 inspector and converter that expands Sparse 
 
 **Language:** English · [Русский](README.ru.md)
 
-> **Project status: v0.7.0 is in development; v0.6.0 remains the latest stable release.** Byte-by-byte comparisons with AOSP `simg2img.exe` were completed on two real factory images: Blackview `super.img` and Google Pixel `userdata_exp.ai.img`; both matched with no differences. The v0.7.0 development tools have also been exercised on real Blackview RAW and Android Sparse `super.img` inputs through the CLI and GUI, with extracted partition SHA-256 values matching between both interfaces, and with a synthetic multi-extent fixture. Several users have separately reported successful tests on additional firmware. One reported scenario used an Android 13 `super.img` on Windows 11: conversion completed and `system.img` extraction succeeded. These user reports are useful compatibility evidence, not a comprehensive certification; they do not guarantee support for every Sparse variant, device, firmware, or Dynamic Partitions layout. Testing individual `super.img` files does not imply support for arbitrary `super_*` sets or every retrofit layout.
+> **Project status: v0.7.0 is the latest stable release.** Byte-by-byte comparisons with AOSP `simg2img.exe` were completed on two real factory images: Blackview `super.img` and Google Pixel `userdata_exp.ai.img`; both matched with no differences. The v0.7.0 tools have also been exercised on real Blackview RAW and Android Sparse `super.img` inputs through the CLI and GUI, with extracted partition SHA-256 values matching between both interfaces, and with a synthetic multi-extent fixture. Several users have separately reported successful tests on additional firmware. One reported scenario used an Android 13 `super.img` on Windows 11: conversion completed and `system.img` extraction succeeded. These user reports are useful compatibility evidence, not a comprehensive certification; they do not guarantee support for every Sparse variant, device, firmware, or Dynamic Partitions layout. Testing individual `super.img` files does not imply support for arbitrary `super_*` sets or every retrofit layout.
 
 ## Features
 
@@ -38,7 +38,7 @@ A streaming Android Sparse Image v1 inspector and converter that expands Sparse 
 
 ## Download for Windows
 
-**Latest stable release:** [sparse-to-raw v0.6.0](https://github.com/LIJTA3U/sparse-to-raw/releases/tag/v0.6.0). Windows applications are built and attached by GitHub Actions.
+**Latest stable release:** [sparse-to-raw v0.7.0](https://github.com/LIJTA3U/sparse-to-raw/releases/tag/v0.7.0). Windows applications are built and attached by GitHub Actions.
 
 The release provides:
 
@@ -50,7 +50,7 @@ End users do not need to install Python to run the packaged Windows applications
 
 ## Windows GUI
 
-The v0.7.0 development branch uses a compact two-row toolbar: primary sections are grouped in the first row, common actions in the second, and less-frequent actions are in the Tools menu. The new Super Image dialog inspects Dynamic Partitions metadata and extracts selected partitions. The Tools menu also includes the read-only AVB / VBMeta and Boot Image Inspectors, plus the Ramdisk Inspector for CPIO inventory, safe extraction, and side-by-side configuration comparison. See the [Super Image guide](docs/en/super-image.md), [AVB / VBMeta guide](docs/en/avb-vbmeta.md), [Boot Image guide](docs/en/boot-image.md), and [Ramdisk guide](docs/en/ramdisk-inspector.md).
+The v0.7.0 release uses a compact two-row toolbar: primary sections are grouped in the first row, common actions in the second, and less-frequent actions are in the Tools menu. The new Super Image dialog inspects Dynamic Partitions metadata and extracts selected partitions. The Tools menu also includes the read-only AVB / VBMeta and Boot Image Inspectors, plus the Ramdisk Inspector for CPIO inventory, safe extraction, and side-by-side configuration comparison. See the [Super Image guide](docs/en/super-image.md), [AVB / VBMeta guide](docs/en/avb-vbmeta.md), [Boot Image guide](docs/en/boot-image.md), and [Ramdisk guide](docs/en/ramdisk-inspector.md).
 
 The GUI uses a dark theme with an angular yellow frame and cyan accents. It supports drag-and-drop, progress statistics, an operation log, saved settings, recent input files, and speed display in decimal MB/s, binary MiB/s, or Mbit/s.
 
@@ -126,7 +126,7 @@ Inspect Android boot and vendor boot metadata with `py sparse_to_raw.py boot-inf
 - [Sparse Structure Viewer](docs/en/sparse-structure-viewer.md)
 - [Development and packaging](docs/en/development.md)
 - [v0.7.0 release checklist](docs/en/release-checklist.md)
-- [v0.6.0 release notes](RELEASE_NOTES_v0.6.0.md)
+- [v0.7.0 release notes](RELEASE_NOTES_v0.7.0.md)
 - [Changelog](docs/en/changelog.md)
 - [Contributing](docs/CONTRIBUTING.md)
 - [Security policy](docs/SECURITY.md)
@@ -134,9 +134,9 @@ Inspect Android boot and vendor boot metadata with `py sparse_to_raw.py boot-inf
 
 The [Russian README](README.ru.md) links to the Russian documentation in `docs/ru/`.
 
-## v0.6.0 stable release
+## v0.7.0 stable release
 
-The stable `v0.6.0` release brings together RAW → Sparse conversion, logical RAW/Sparse comparison without intermediate RAW files, the standalone Sparse Validator, reusable JSON Batch Profiles, expanded QFIL integration, structured JSON reports, and automated Windows CLI/GUI packaging. Windows release artifacts were built by GitHub Actions and the packaged application was confirmed to run on a Windows computer without Python installed. See the [English changelog](docs/en/changelog.md) or [русскую историю изменений](docs/ru/changelog.md) for details.
+The stable `v0.7.0` release expands sparse-to-raw from a Sparse converter into an Android firmware image inspection toolkit. It adds Super Image inspection and selected logical partition extraction, QFIL package preflight, AVB/VBMeta inspection, boot-image metadata inspection, and Ramdisk CPIO inventory, safe extraction, and side-by-side configuration comparison. The existing RAW → Sparse conversion, logical image comparison, Sparse validation, QFIL XML analysis and RAW assembly, JSON reporting, and dependency-free CLI remain available. Windows CLI and GUI packages are built by GitHub Actions and do not require Python or PySide6 on the target machine. See the [English changelog](docs/en/changelog.md) or [русскую историю изменений](docs/ru/changelog.md) for details.
 
 ## Tests
 
@@ -150,7 +150,7 @@ The core suite covers chunk types, checksums, malformed and truncated data, safe
 
 ## Limitations and safety
 
-- The stable v0.6.0 release is not an official AOSP `simg2img` replacement; Super Image tools are part of the current v0.7.0-dev development branch.
+- The v0.7.0 release is not an official AOSP `simg2img` replacement.
 - Independent byte-for-byte comparisons were performed only on the two real images named above; this is not broad device/firmware certification.
 - `--merge-parts` is only for independent, valid Sparse v1 files and does not reconstruct arbitrary `super` containers. Separate `super-info` / `super-extract` commands parse supported Dynamic Partitions metadata (LP 10.0–10.2), but currently require extracted extents to reference block device index 0. Multi-image retrofit layouts and arbitrary `super_*` sets are not supported. See the [4PDA example](https://4pda.to/forum/index.php?showtopic=496786&st=5460). Verify outputs independently before using them for critical work.
 - Boot Image Inspector is a metadata viewer: it does not decompress or extract kernel/ramdisk payloads, interpret DTB contents, verify AVB signatures, or identify `boot`, `recovery`, and `init_boot` partition names from the header alone. The separate Ramdisk Inspector can unpack supported CPIO compression formats, but it does not repack images, create symlinks/special nodes, or restore ownership and SELinux metadata. Zstandard and LZO/lzop are detected but not decompressed in the dependency-free build. `init_boot` is reported only as a probable role when the image shape suggests it.

@@ -14,7 +14,7 @@ py sparse_to_raw.py --version
 py sparse_to_raw.py --help
 ```
 
-Релизный коммит должен выводить `sparse-to-raw v0.7.0`. Перед изменением `APP_VERSION` с `v0.7.0-dev` завершите разработку и обновите обе версии CHANGELOG и заметки к релизу.
+Релизный коммит должен выводить `sparse-to-raw v0.7.0`. Перед финальным запуском тестов и сборки константа `APP_VERSION` должна быть установлена в `v0.7.0`. Обе истории изменений и оба файла Release Notes должны описывать одно и то же содержимое релиза.
 
 Проверьте наличие в справке интегрированных команд: `qfil-analyze`, `qfil-validate`, `qfil-build`, `super-info`, `super-extract`, `vbmeta-info`, `boot-info`, `ramdisk-info`, `ramdisk-extract`, `validate`, `compare` и `raw-to-sparse`.
 
